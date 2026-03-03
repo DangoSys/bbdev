@@ -3,8 +3,6 @@ import subprocess
 import sys
 from datetime import datetime
 
-from motia import FlowContext, queue
-
 # Add the utils directory to the Python path
 utils_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if utils_path not in sys.path:
@@ -16,15 +14,16 @@ from utils.search_workload import search_workload
 from utils.event_common import check_result
 
 config = {
+    "type": "event",
     "name": "make cosim",
     "description": "run cosimulation",
+    "subscribes": ["verilator.cosim"],
+    "emits": [],
     "flows": ["verilator"],
-    "triggers": [queue("verilator.cosim")],
-    "enqueues": [],
 }
 
 
-async def handler(input_data: dict, ctx: FlowContext) -> None:
+async def handler(data, context):
     # ==================================================================================
     # Get simulation parameters
     # ==================================================================================
@@ -35,17 +34,17 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     # Generate timestamp
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
 
-    binary_name = input_data.get("binary", "")
+    binary_name = data.get("binary", "")
     success_result, failure_result = await check_result(
-        ctx, returncode=(binary_name == None), continue_run=True
+        context, returncode=(binary_name == None), continue_run=True
     )
 
     binary_path = search_workload(f"{bbdir}/bb-tests/output/workloads/src", binary_name)
     success_result, failure_result = await check_result(
-        ctx, returncode=(binary_path == None), continue_run=True
+        context, returncode=(binary_path == None), continue_run=True
     )
     if failure_result:
-        ctx.logger.error("binary not found", failure_result)
+        context.logger.error("binary not found", failure_result)
         return
 
     # Create log and waveform directory
@@ -57,7 +56,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     os.makedirs(waveform_dir, exist_ok=True)
 
     bin_path = f"{build_dir}/obj_dir/V{topname}"
-    batch = input_data.get("batch", False)
+    batch = data.get("batch", False)
 
     # Create log and waveform file
     log_path = f"{log_dir}/bdb.log"
@@ -85,17 +84,17 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
 
     result = stream_run_logger(
         cmd=sim_cmd,
-        logger=ctx.logger,
+        logger=context.logger,
         cwd=script_dir,
         stdout_prefix="verilator sim",
         stderr_prefix="verilator sim",
         executable="bash",
     )
     success_result, failure_result = await check_result(
-        ctx, returncode=result.returncode, continue_run=True
+        context, returncode=result.returncode, continue_run=True
     )
     if failure_result:
-        ctx.logger.error("sim failed", failure_result)
+        context.logger.error("sim failed", failure_result)
         return
 
     if os.path.exists(f"{waveform_dir}/waveform.fst.heir"):
@@ -110,7 +109,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     # ==================================================================================
     # This is the end point of the run workflow, status will no longer be set to processing
     success_result, failure_result = await check_result(
-        ctx,
+        context,
         result.returncode,
         continue_run=False,
         extra_fields={

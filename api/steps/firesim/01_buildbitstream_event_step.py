@@ -1,7 +1,6 @@
 import os
+import subprocess
 import sys
-
-from motia import FlowContext, queue
 
 # Add the utils directory to the Python path
 utils_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -13,15 +12,16 @@ from utils.stream_run import stream_run_logger
 from utils.event_common import check_result
 
 config = {
+    "type": "event",
     "name": "Firesim Buildbitstream",
     "description": "build bitstream",
+    "subscribes": ["firesim.buildbitstream"],
+    "emits": [],
     "flows": ["firesim"],
-    "triggers": [queue("firesim.buildbitstream")],
-    "enqueues": [],
 }
 
 
-async def handler(input_data: dict, ctx: FlowContext) -> None:
+async def handler(data, context):
     bbdir = get_buckyball_path()
     script_dir = f"{bbdir}/workflow/steps/firesim/scripts"
     yaml_dir = f"{script_dir}/yaml"
@@ -35,7 +35,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     command += f" -c {yaml_dir}/config_runtime.yaml"
     result = stream_run_logger(
         cmd=command,
-        logger=ctx.logger,
+        logger=context.logger,
         stdout_prefix="firesim buildbitstream",
         stderr_prefix="firesim buildbitstream",
     )
@@ -44,7 +44,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     # Return result to API
     # ==================================================================================
     success_result, failure_result = await check_result(
-        ctx, result.returncode, continue_run=False
+        context, result.returncode, continue_run=False
     )
 
     # ==================================================================================

@@ -1,28 +1,30 @@
+from contextlib import redirect_stdout
 import os
 import subprocess
 import sys
-
-from motia import FlowContext, queue
+import time
 
 # Add the utils directory to the Python path
 utils_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if utils_path not in sys.path:
     sys.path.insert(0, utils_path)
 
+
 from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
 from utils.event_common import check_result
 
 config = {
+    "type": "event",
     "name": "build workload",
     "description": "build workload",
+    "subscribes": ["workload.build"],
+    "emits": [],
     "flows": ["workload"],
-    "triggers": [queue("workload.build")],
-    "enqueues": [],
 }
 
 
-async def handler(input_data: dict, ctx: FlowContext) -> None:
+async def handler(data, context):
     bbdir = get_buckyball_path()
     workload_dir = f"{bbdir}/bb-tests"
     build_dir = f"{workload_dir}/build"
@@ -31,12 +33,12 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     subprocess.run(f"rm -rf {build_dir} && mkdir -p {build_dir}", shell=True)
 
     command = f"cd {build_dir} && cmake -G Ninja .. && ninja -j{os.cpu_count()}"
-    ctx.logger.info(
+    context.logger.info(
         "Executing workload command", {"command": command, "cwd": build_dir}
     )
     result = stream_run_logger(
         cmd=command,
-        logger=ctx.logger,
+        logger=context.logger,
         cwd=workload_dir,
         executable="bash",
         stdout_prefix="workload build",
@@ -48,7 +50,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     # ==================================================================================
     # This is the end of run workflow, status no longer set to processing
     success_result, failure_result = await check_result(
-        ctx, result.returncode, continue_run=False
+        context, result.returncode, continue_run=False
     )
 
     # ==================================================================================
