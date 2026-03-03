@@ -1,6 +1,7 @@
 import os
-import subprocess
 import sys
+
+from motia import FlowContext, queue
 
 # Add the utils directory to the Python path
 utils_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -12,16 +13,15 @@ from utils.stream_run import stream_run_logger
 from utils.event_common import check_result
 
 config = {
-    "type": "event",
     "name": "Marshal Launch",
     "description": "launch marshal",
-    "subscribes": ["marshal.launch"],
-    "emits": [],
     "flows": ["marshal"],
+    "triggers": [queue("marshal.launch")],
+    "enqueues": [],
 }
 
 
-async def handler(data, context):
+async def handler(input_data: dict, ctx: FlowContext) -> None:
     bbdir = get_buckyball_path()
     script_dir = f"{bbdir}/workflow/steps/marshal/scripts"
     # ==================================================================================
@@ -30,7 +30,7 @@ async def handler(data, context):
     command = f"./marshal -v launch interactive.json"
     result = stream_run_logger(
         cmd=command,
-        logger=context.logger,
+        logger=ctx.logger,
         cwd=script_dir,
         stdout_prefix="marshal launch",
         stderr_prefix="marshal launch",
@@ -40,7 +40,7 @@ async def handler(data, context):
     # Return result to API
     # ==================================================================================
     success_result, failure_result = await check_result(
-        context, result.returncode, continue_run=False
+        ctx, result.returncode, continue_run=False
     )
 
     # ==================================================================================

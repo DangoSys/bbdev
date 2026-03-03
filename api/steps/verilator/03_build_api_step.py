@@ -1,30 +1,31 @@
 import asyncio
+
+from motia import ApiRequest, ApiResponse, FlowContext, http
+
 from utils.event_common import wait_for_result
 
 config = {
-    "type": "api",
     "name": "Verilator Build",
     "description": "build verilator executable",
-    "path": "/verilator/build",
-    "method": "POST",
-    "emits": ["verilator.build"],
     "flows": ["verilator"],
+    "triggers": [http("POST", "/verilator/build")],
+    "enqueues": ["verilator.build"],
 }
 
 
-async def handler(req, context):
-    body = req.get("body") or {}
+async def handler(request: ApiRequest, ctx: FlowContext) -> ApiResponse:
+    body = request.body or {}
     data = {
         "jobs": body.get("jobs", 16),
         "cosim": body.get("cosim", False),
     }
-    await context.emit({"topic": "verilator.build", "data": data})
+    await ctx.enqueue({"topic": "verilator.build", "data": data})
 
     # ==================================================================================
     #  Wait for simulation result
     # ==================================================================================
     while True:
-        result = await wait_for_result(context)
+        result = await wait_for_result(ctx)
         if result is not None:
             return result
         await asyncio.sleep(1)

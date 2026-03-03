@@ -1,26 +1,27 @@
 import asyncio
+
+from motia import ApiRequest, ApiResponse, FlowContext, http
+
 from utils.event_common import wait_for_result
 
 config = {
-    "type": "api",
     "name": "Firesim Buildbitstream",
     "description": "build bitstream",
-    "path": "/firesim/buildbitstream",
-    "method": "POST",
-    "emits": ["firesim.buildbitstream"],
     "flows": ["firesim"],
+    "triggers": [http("POST", "/firesim/buildbitstream")],
+    "enqueues": ["firesim.buildbitstream"],
 }
 
 
-async def handler(req, context):
-    body = req.get("body") or {}
-    await context.emit({"topic": "firesim.buildbitstream", "data": body})
+async def handler(request: ApiRequest, ctx: FlowContext) -> ApiResponse:
+    body = request.body or {}
+    await ctx.enqueue({"topic": "firesim.buildbitstream", "data": body})
 
     # ==================================================================================
     #  Wait for simulation result
     # ==================================================================================
     while True:
-        result = await wait_for_result(context)
+        result = await wait_for_result(ctx)
         if result is not None:
             return result
         await asyncio.sleep(1)
