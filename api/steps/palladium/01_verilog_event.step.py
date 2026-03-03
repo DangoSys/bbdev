@@ -10,10 +10,10 @@ if utils_path not in sys.path:
 
 from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
-from utils.event_common import check_result
+from utils.event_common import check_result, get_origin_trace_id
 
 config = {
-    "name": "make verilog",
+    "name": "palladium-verilog",
     "description": "generate verilog code",
     "flows": ["palladium"],
     "triggers": [queue("palladium.verilog")],
@@ -22,6 +22,7 @@ config = {
 
 
 async def handler(input_data: dict, ctx: FlowContext) -> None:
+    origin_tid = get_origin_trace_id(input_data, ctx)
     bbdir = get_buckyball_path()
     # Use arch/build as the base directory for chipyard.Generator
     base_build_dir = f"{input_data.get('output_dir', f'{bbdir}/arch/build')}/palladium"
@@ -41,8 +42,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
                 "task": "validation",
                 "error": "Configuration name is required. Please specify --config_name parameter.",
                 "example": './bbdev palladium --verilog "--config_name sims.palladium.BuckyballToyP2EConfig"',
-            },
-        )
+            }, trace_id=origin_tid)
         return failure_result
 
     ctx.logger.info(f"Using configuration: {config_name}")
@@ -75,8 +75,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
             ctx,
             result.returncode,
             continue_run=False,
-            extra_fields={"task": "firrtl", "step": "generate"},
-        )
+            extra_fields={"task": "firrtl", "step": "generate"}, trace_id=origin_tid)
         return failure_result
 
     # ==================================================================================
@@ -101,8 +100,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
             ctx,
             1,
             continue_run=False,
-            extra_fields={"task": "firrtl", "step": "file_check"},
-        )
+            extra_fields={"task": "firrtl", "step": "file_check"}, trace_id=origin_tid)
         return failure_result
 
     verilog_command = (
@@ -130,8 +128,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
             ctx,
             result.returncode,
             continue_run=False,
-            extra_fields={"task": "verilog", "step": "firtool"},
-        )
+            extra_fields={"task": "verilog", "step": "firtool"}, trace_id=origin_tid)
         return failure_result
 
     # ==================================================================================
@@ -145,7 +142,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
             "task": "verilog",
             "output_dir": verilog_output_dir,
             "top_module": "VCU118FPGATestHarness",
-        },
+        }, trace_id=origin_tid,
     )
 
     # ==================================================================================

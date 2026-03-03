@@ -10,51 +10,41 @@ if utils_path not in sys.path:
 
 from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
-from utils.event_common import check_result
+from utils.event_common import check_result, get_origin_trace_id
 
 config = {
-    "name": "make clean",
-    "description": "clean build directory",
-    "flows": ["verilator"],
-    "triggers": [
-        queue("verilator.run"),
-        queue("verilator.clean"),
-    ],
-    "enqueues": ["verilator.verilog"],
+    "name": "marshal-launch",
+    "description": "launch marshal",
+    "flows": ["marshal"],
+    "triggers": [queue("marshal.launch")],
+    "enqueues": [],
 }
 
 
 async def handler(input_data: dict, ctx: FlowContext) -> None:
+    origin_tid = get_origin_trace_id(input_data, ctx)
     bbdir = get_buckyball_path()
-    build_dir = f"{bbdir}/arch/build"
+    script_dir = f"{bbdir}/workflow/steps/marshal/scripts"
     # ==================================================================================
     # Execute operation
     # ==================================================================================
-    command = f"rm -rf {build_dir}"
+    command = f"./marshal -v launch interactive.json"
     result = stream_run_logger(
         cmd=command,
         logger=ctx.logger,
-        cwd=bbdir,
-        stdout_prefix="verilator clean",
-        stderr_prefix="verilator clean",
+        cwd=script_dir,
+        stdout_prefix="marshal launch",
+        stderr_prefix="marshal launch",
     )
 
     # ==================================================================================
     # Return result to API
     # ==================================================================================
     success_result, failure_result = await check_result(
-        ctx,
-        result.returncode,
-        continue_run=input_data.get("from_run_workflow", False),
-        extra_fields={"task": "clean"},
-    )
+        ctx, result.returncode, continue_run=False, trace_id=origin_tid)
 
     # ==================================================================================
     # Continue routing
+    # Finish workflow
     # ==================================================================================
-    if input_data.get("from_run_workflow"):
-        await ctx.enqueue(
-            {"topic": "verilator.verilog", "data": {**input_data, "task": "run"}}
-        )
-
     return

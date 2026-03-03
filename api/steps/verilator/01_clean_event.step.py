@@ -10,47 +10,52 @@ if utils_path not in sys.path:
 
 from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
-from utils.event_common import check_result
+from utils.event_common import check_result, get_origin_trace_id
 
 config = {
-    "name": "Build Compiler",
-    "description": "build bitstream",
-    "flows": ["compiler"],
-    "triggers": [queue("compiler.build")],
-    "enqueues": [],
+    "name": "verilator-clean",
+    "description": "clean build directory",
+    "flows": ["verilator"],
+    "triggers": [
+        queue("verilator.run"),
+        queue("verilator.clean"),
+    ],
+    "enqueues": ["verilator.verilog"],
 }
 
 
 async def handler(input_data: dict, ctx: FlowContext) -> None:
+    origin_tid = get_origin_trace_id(input_data, ctx)
     bbdir = get_buckyball_path()
-    script_dir = f"{bbdir}/workflow/steps/compiler/scripts"
-    yaml_dir = f"{script_dir}/yaml"
+    build_dir = f"{bbdir}/arch/build"
     # ==================================================================================
     # Execute operation
     # ==================================================================================
-    command = f"mkdir -p {bbdir}/compiler/build"
+    command = f"rm -rf {build_dir}"
     result = stream_run_logger(
         cmd=command,
         logger=ctx.logger,
-        stdout_prefix="compiler build",
-        stderr_prefix="compiler build",
-    )
-    command = f"cd {bbdir}/compiler/build && ninja -j{os.cpu_count()}"
-    result = stream_run_logger(
-        cmd=command,
-        logger=ctx.logger,
-        stdout_prefix="compiler build",
-        stderr_prefix="compiler build",
+        cwd=bbdir,
+        stdout_prefix="verilator clean",
+        stderr_prefix="verilator clean",
     )
 
     # ==================================================================================
     # Return result to API
     # ==================================================================================
     success_result, failure_result = await check_result(
-        ctx, result.returncode, continue_run=False
+        ctx,
+        result.returncode,
+        continue_run=input_data.get("from_run_workflow", False),
+        extra_fields={"task": "clean"}, trace_id=origin_tid,
     )
 
     # ==================================================================================
     # Continue routing
     # ==================================================================================
+    if input_data.get("from_run_workflow"):
+        await ctx.enqueue(
+            {"topic": "verilator.verilog", "data": {**input_data, "task": "run"}}
+        )
+
     return

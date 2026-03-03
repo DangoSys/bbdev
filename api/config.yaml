@@ -13,7 +13,7 @@ modules:
     config:
       port: 3111
       host: 0.0.0.0
-      default_timeout: 30000
+      default_timeout: 86400000
       concurrency_request_limit: 1024
       cors:
         allowed_origins:
@@ -44,4 +44,4 @@ modules:
       watch:
         - steps/**/*.py
       exec:
-        - motia dev --dir steps
+        - PYTHONUNBUFFERED=1 PYTHONPATH=. .venv/bin/motia dev --dir steps

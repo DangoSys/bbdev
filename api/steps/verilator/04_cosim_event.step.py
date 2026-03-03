@@ -13,18 +13,19 @@ if utils_path not in sys.path:
 from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
 from utils.search_workload import search_workload
-from utils.event_common import check_result
+from utils.event_common import check_result, get_origin_trace_id
 
 config = {
-    "name": "make sim",
-    "description": "run simulation",
+    "name": "verilator-cosim",
+    "description": "run cosimulation",
     "flows": ["verilator"],
-    "triggers": [queue("verilator.sim")],
+    "triggers": [queue("verilator.cosim")],
     "enqueues": [],
 }
 
 
 async def handler(input_data: dict, ctx: FlowContext) -> None:
+    origin_tid = get_origin_trace_id(input_data, ctx)
     # ==================================================================================
     # Get simulation parameters
     # ==================================================================================
@@ -37,13 +38,12 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
 
     binary_name = input_data.get("binary", "")
     success_result, failure_result = await check_result(
-        ctx, returncode=(binary_name == None), continue_run=True
+        ctx, returncode=(binary_name == None), continue_run=True, trace_id=origin_tid,
     )
 
     binary_path = search_workload(f"{bbdir}/bb-tests/output/workloads/src", binary_name)
-    ctx.logger.info(f"binary_path: {binary_path}")
     success_result, failure_result = await check_result(
-        ctx, returncode=(binary_path == None), continue_run=True
+        ctx, returncode=(binary_path == None), continue_run=True, trace_id=origin_tid,
     )
     if failure_result:
         ctx.logger.error("binary not found", failure_result)
@@ -52,7 +52,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     # Create log and waveform directory
     log_dir = f"{arch_dir}/log/{timestamp}-{binary_name}"
     waveform_dir = f"{arch_dir}/waveform/{timestamp}-{binary_name}"
-    topname = "TestHarness"
+    topname = "ToyBuckyball"
 
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(waveform_dir, exist_ok=True)
@@ -93,8 +93,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         executable="bash",
     )
     success_result, failure_result = await check_result(
-        ctx, returncode=result.returncode, continue_run=True
-    )
+        ctx, returncode=result.returncode, continue_run=True, trace_id=origin_tid)
     if failure_result:
         ctx.logger.error("sim failed", failure_result)
         return
@@ -120,8 +119,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
             "log_dir": log_dir,
             "waveform_dir": waveform_dir,
             "timestamp": timestamp,
-        },
-    )
+        }, trace_id=origin_tid)
 
     # ==================================================================================
     #  Finish workflow

@@ -1,15 +1,12 @@
-import asyncio
+from motia import ApiRequest, ApiResponse, FlowContext, api
 
-from motia import ApiRequest, ApiResponse, FlowContext, http
-
-from utils.event_common import wait_for_result
 from utils.path import get_buckyball_path
 
 config = {
-    "name": "Verilator Verilog",
+    "name": "verilator-verilog-api",
     "description": "generate verilog code",
     "flows": ["verilator"],
-    "triggers": [http("POST", "/verilator/verilog")],
+    "triggers": [api("POST", "/verilator/verilog")],
     "enqueues": ["verilator.verilog"],
 }
 
@@ -35,13 +32,5 @@ async def handler(request: ApiRequest, ctx: FlowContext) -> ApiResponse:
         "balltype": body.get("balltype"),
         "output_dir": body.get("output_dir", f"{bbdir}/arch/build/"),
     }
-    await ctx.enqueue({"topic": "verilator.verilog", "data": data})
-
-    # ==================================================================================
-    #  Wait for simulation result
-    # ==================================================================================
-    while True:
-        result = await wait_for_result(ctx)
-        if result is not None:
-            return result
-        await asyncio.sleep(1)
+    await ctx.enqueue({"topic": "verilator.verilog", "data": {**data, "_trace_id": ctx.trace_id}})
+    return ApiResponse(status=202, body={"trace_id": ctx.trace_id})

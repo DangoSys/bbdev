@@ -8,12 +8,29 @@ import signal
 import shlex
 import json
 import time
-import shutil
+import tempfile
+import re
+import threading
 import requests
 
 from utils import find_available_port
 
 workflow_dir = os.path.dirname(os.path.abspath(__file__)) + "/api"
+
+
+def make_iii_config(port: int) -> str:
+    """Create a temporary config.yaml with the specified port, return the path."""
+    base_config = os.path.join(workflow_dir, "config.yaml")
+    with open(base_config, "r") as f:
+        content = f.read()
+    # Replace the RestApiModule port
+    content = re.sub(r"(port:\s*)\d+", rf"\g<1>{port}", content, count=1)
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", prefix="iii-config-", dir=workflow_dir, delete=False
+    )
+    tmp.write(content)
+    tmp.close()
+    return tmp.name
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -363,17 +380,22 @@ if __name__ == "__main__":
     if args.server:
         if cmd_info["command"] == "start":
             print(f"Starting dev server on port {args.port}")
-            subprocess.run(
-                ["pnpm", "dev", "--port", str(args.port)],
-                cwd=workflow_dir,
-                check=True,
-            )
+            config_path = make_iii_config(args.port) if args.port else os.path.join(workflow_dir, "config.yaml")
+            try:
+                subprocess.run(
+                    ["iii", "-c", config_path],
+                    cwd=workflow_dir,
+                    check=True,
+                )
+            finally:
+                if args.port and os.path.exists(config_path):
+                    os.unlink(config_path)
 
         elif cmd_info["command"] == "stop":
             if cmd_info["operation"] == "all":
                 print("Stopping all servers")
                 subprocess.run(
-                    "kill -9 $(ps aux | grep '[m]otia' | awk '{print $2}')",
+                    "kill -9 $(ps aux | grep '[i]ii' | awk '{print $2}')",
                     shell=True,
                     check=False,
                     text=True,
@@ -443,11 +465,6 @@ if __name__ == "__main__":
             "uvm",
             "palladium",
         ]:
-            # 0. Clean up stale BullMQ/Redis data to prevent replaying old events
-            aof_dir = os.path.join(workflow_dir, ".motia", "appendonlydir")
-            if os.path.exists(aof_dir):
-                shutil.rmtree(aof_dir)
-
             # 1. Start service in background ================================
             # If port is specified, use the specified port; otherwise, automatically assign port
             if args.port:
@@ -455,29 +472,51 @@ if __name__ == "__main__":
             else:
                 available_port = find_available_port(start_port=5100, end_port=5500)
             print(f"Starting server on port {available_port}...")
-            proc = subprocess.Popen(
-                ["pnpm", "dev", "--port", str(available_port)],
-                cwd=workflow_dir,
-                stderr=subprocess.DEVNULL  # Suppress stderr to hide BullMQ errors
-            )
+            config_path = make_iii_config(available_port)
+            iii_output_active = threading.Event()
+            iii_output_active.set()
 
-            # Wait for service to start
+            def forward_iii_output(pipe):
+                """Forward only task output (from stream_run_logger) to stdout.
+                Skip iii engine logs and motia framework logs in script mode."""
+                for line in iter(pipe.readline, ""):
+                    if not iii_output_active.is_set():
+                        continue
+                    # Task output from stream_run_logger starts with ANSI color codes: \033[32m or \033[31m
+                    if line.startswith("\033["):
+                        sys.stdout.write(line)
+                        sys.stdout.flush()
+                pipe.close()
+
+            proc = subprocess.Popen(
+                ["iii", "-c", config_path],
+                cwd=workflow_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            output_thread = threading.Thread(
+                target=forward_iii_output, args=(proc.stdout,), daemon=True
+            )
+            output_thread.start()
+
+            # Wait for service to start (both iii engine AND motia SDK routes)
+            api_path = f"/{cmd_info['command']}/{cmd_info['operation']}"
             max_retries = 300
+            # Phase 1: wait for iii engine HTTP to be reachable
             for i in range(max_retries):
                 try:
-                    # Disable proxy, connect directly to localhost
-                    # response = requests.get(f"http://localhost:{available_port}", timeout=1)
                     response = requests.get(
-                        f"http://localhost:{available_port}",
+                        f"http://localhost:{available_port}/",
                         timeout=1,
                         proxies={"http": None, "https": None, "all": None},
                     )
-                    if response.status_code == 200:
-                        print(f"Server is ready on port {available_port}")
-                        break
-                except requests.exceptions.RequestException:
+                    break  # any response (even 404) means iii is up
+                except requests.exceptions.ConnectionError:
                     pass
-                time.sleep(3)
+                except requests.exceptions.RequestException:
+                    break
+                time.sleep(1)
             else:
                 print("Server failed to start within 30 seconds")
                 subprocess.run(
@@ -488,49 +527,120 @@ if __name__ == "__main__":
                 )
                 proc.terminate()
                 proc.wait()
+                if os.path.exists(config_path):
+                    os.unlink(config_path)
+                sys.exit(1)
+            # Phase 2: wait for motia SDK to register routes
+            for i in range(max_retries):
+                try:
+                    response = requests.get(
+                        f"http://localhost:{available_port}{api_path}",
+                        timeout=1,
+                        proxies={"http": None, "https": None, "all": None},
+                    )
+                    # 404 = route not registered yet; 405 = route exists (POST only)
+                    if response.status_code != 404:
+                        print(f"Server is ready on port {available_port}")
+                        break
+                except requests.exceptions.RequestException:
+                    pass
+                time.sleep(1)
+            else:
+                print("Motia SDK routes failed to register within timeout")
+                proc.terminate()
+                proc.wait()
+                if os.path.exists(config_path):
+                    os.unlink(config_path)
                 sys.exit(1)
 
-            # 2. Execute API call ================================
-            api_path = f"/{cmd_info['command']}/{cmd_info['operation']}"
-            json_data = json.dumps(cmd_info["args"])
+            # 2. Execute API call (fire-and-forget, returns trace_id) ====
             print(f"Executing {cmd_info['command']} {cmd_info['operation']}...")
-            # Disable proxy, connect directly to localhost
-            result = subprocess.run(
-                [
-                    "curl",
-                    "-sS",
-                    "--noproxy",
-                    "localhost",
-                    "-X",
-                    "POST",
-                    f"http://localhost:{available_port}{api_path}",
-                    "-H",
-                    "Content-Type: application/json",
-                    "-d",
-                    json_data,
-                ],
-                cwd=workflow_dir,
-                capture_output=True,
-                text=True,
-            )
+            base_url = f"http://localhost:{available_port}"
+            no_proxy = {"http": None, "https": None, "all": None}
+            try:
+                submit_resp = requests.post(
+                    f"{base_url}{api_path}",
+                    json=cmd_info["args"],
+                    timeout=30,
+                    proxies=no_proxy,
+                )
+                submit_data = submit_resp.json()
+            except Exception as e:
+                print(f"Error: Failed to submit task: {e}")
+                proc.terminate()
+                proc.wait()
+                if os.path.exists(config_path):
+                    os.unlink(config_path)
+                sys.exit(1)
 
-            # 3. Shutdown service ================================
-            # Give observability plugin time to finish async operations (e.g., Redis writes)
+            # If the API returned an error directly (e.g. validation), handle it
+            if submit_resp.status_code >= 400:
+                print(f"Error: {submit_data}")
+                iii_output_active.clear()
+                time.sleep(1)
+                proc.terminate()
+                proc.wait()
+                if os.path.exists(config_path):
+                    os.unlink(config_path)
+                sys.exit(1)
+
+            trace_id = submit_data.get("trace_id", "")
+            if not trace_id:
+                print(f"Error: No trace_id in response: {submit_data}")
+                proc.terminate()
+                proc.wait()
+                if os.path.exists(config_path):
+                    os.unlink(config_path)
+                sys.exit(1)
+
+            # 3. Poll for result (read state store directly) =========
+            state_dir = os.path.join(workflow_dir, "data", "state_store.db")
+            state_file = os.path.join(state_dir, f"{trace_id}.bin")
+            task_result = None
+            while True:
+                try:
+                    if os.path.exists(state_file):
+                        with open(state_file, "r", errors="ignore") as f:
+                            raw = f.read()
+                        # State file is JSON followed by binary padding, extract JSON
+                        # Find the last } to get the JSON part
+                        brace_depth = 0
+                        json_end = 0
+                        for i, ch in enumerate(raw):
+                            if ch == "{":
+                                brace_depth += 1
+                            elif ch == "}":
+                                brace_depth -= 1
+                                if brace_depth == 0:
+                                    json_end = i + 1
+                                    break
+                        if json_end > 0:
+                            state_data = json.loads(raw[:json_end])
+                            if "success" in state_data:
+                                task_result = state_data["success"].get("body", state_data["success"])
+                                break
+                            elif "failure" in state_data:
+                                task_result = state_data["failure"].get("body", state_data["failure"])
+                                break
+                except Exception:
+                    pass
+                time.sleep(2)
+
+            # 4. Shutdown service ================================
+            iii_output_active.clear()  # suppress iii shutdown noise
             time.sleep(1)
             proc.terminate()
             proc.wait()
+            # Clean up temp config
+            if os.path.exists(config_path):
+                os.unlink(config_path)
             print(
                 f"\nTask completed. Command running on http://localhost:{available_port} is finished"
             )
 
-            # Check the success field returned by API
-            try:
-                response = json.loads(result.stdout)
-                if not response.get("success", False):
-                    print("Error: Task failed")
-                    sys.exit(1)
-            except Exception:
-                print("Error: Invalid API response")
+            # Check the success field returned by poll
+            if task_result and not task_result.get("success", False):
+                print("Error: Task failed")
                 sys.exit(1)
 
         else:

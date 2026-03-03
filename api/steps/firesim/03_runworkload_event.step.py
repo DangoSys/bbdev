@@ -10,10 +10,10 @@ if utils_path not in sys.path:
 
 from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
-from utils.event_common import check_result
+from utils.event_common import check_result, get_origin_trace_id
 
 config = {
-    "name": "Firesim Runworkload",
+    "name": "firesim-runworkload",
     "description": "run workload",
     "flows": ["firesim"],
     "triggers": [queue("firesim.runworkload")],
@@ -22,6 +22,7 @@ config = {
 
 
 async def handler(input_data: dict, ctx: FlowContext) -> None:
+    origin_tid = get_origin_trace_id(input_data, ctx)
     bbdir = get_buckyball_path()
     script_dir = f"{bbdir}/workflow/steps/firesim/scripts"
     yaml_dir = f"{script_dir}/yaml"
@@ -44,8 +45,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     # Return result to API
     # ==================================================================================
     success_result, failure_result = await check_result(
-        ctx, result.returncode, continue_run=False
-    )
+        ctx, result.returncode, continue_run=False, trace_id=origin_tid)
 
     # ==================================================================================
     # Continue routing

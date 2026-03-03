@@ -10,10 +10,10 @@ if utils_path not in sys.path:
 
 from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
-from utils.event_common import check_result
+from utils.event_common import check_result, get_origin_trace_id
 
 config = {
-    "name": "make verilog",
+    "name": "verilator-verilog",
     "description": "generate verilog code",
     "flows": ["verilator"],
     "triggers": [queue("verilator.verilog")],
@@ -22,6 +22,7 @@ config = {
 
 
 async def handler(input_data: dict, ctx: FlowContext) -> None:
+    origin_tid = get_origin_trace_id(input_data, ctx)
     bbdir = get_buckyball_path()
     build_dir = input_data.get("output_dir", f"{bbdir}/arch/build/")
     arch_dir = f"{bbdir}/arch"
@@ -38,8 +39,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
                 "task": "validation",
                 "error": "Configuration name is required. Please specify --config parameter.",
                 "example": 'bbdev verilator --verilog "--config sims.verilator.BuckyballToyVerilatorConfig"',
-            },
-        )
+            }, trace_id=origin_tid)
         return failure_result
 
     ctx.logger.info(f"Using configuration: {config_name}")
@@ -77,7 +77,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         ctx,
         result.returncode,
         continue_run=input_data.get("from_run_workflow", False),
-        extra_fields={"task": "verilog"},
+        extra_fields={"task": "verilog"}, trace_id=origin_tid,
     )
 
     # ==================================================================================

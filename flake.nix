@@ -35,8 +35,6 @@
             fi
             export PATH="$VENV_DIR/bin:$PATH"
 
-            source "$PWD/init.sh"
-
             echo "bbdev dev environment ready"
             echo "  Python:  $(python3 --version)"
             echo "  bbdev:   $(which bbdev)"

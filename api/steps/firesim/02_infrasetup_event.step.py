@@ -10,61 +10,45 @@ if utils_path not in sys.path:
 
 from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
-from utils.event_common import check_result
+from utils.event_common import check_result, get_origin_trace_id
 
 config = {
-    "name": "Marshal Build",
-    "description": "build marshal",
-    "flows": ["marshal"],
-    "triggers": [queue("marshal.build")],
-    "enqueues": ["marshal.complete", "marshal.error"],
+    "name": "firesim-infrasetup",
+    "description": "infrasetup",
+    "flows": ["firesim"],
+    "triggers": [queue("firesim.infrasetup")],
+    "enqueues": [],
 }
 
 
 async def handler(input_data: dict, ctx: FlowContext) -> None:
+    origin_tid = get_origin_trace_id(input_data, ctx)
     bbdir = get_buckyball_path()
-    script_dir = f"{bbdir}/workflow/steps/marshal/scripts"
+    script_dir = f"{bbdir}/workflow/steps/firesim/scripts"
+    yaml_dir = f"{script_dir}/yaml"
     # ==================================================================================
     # Execute operation
     # ==================================================================================
-    command = f"./marshal -v build interactive.json  && ./marshal -v install interactive.json"
+    command = f"firesim infrasetup "
+    command += f" -a {yaml_dir}/config_hwdb.yaml"
+    command += f" -b {yaml_dir}/config_build.yaml"
+    command += f" -r {yaml_dir}/config_build_recipes.yaml"
+    command += f" -c {yaml_dir}/config_runtime.yaml"
     result = stream_run_logger(
         cmd=command,
         logger=ctx.logger,
-        cwd=script_dir,
-        stdout_prefix="marshal build",
-        stderr_prefix="marshal build",
+        stdout_prefix="firesim infrasetup",
+        stderr_prefix="firesim infrasetup",
     )
 
     # ==================================================================================
     # Return result to API
     # ==================================================================================
     success_result, failure_result = await check_result(
-        ctx, result.returncode, continue_run=False
-    )
+        ctx, result.returncode, continue_run=False, trace_id=origin_tid)
 
     # ==================================================================================
     # Continue routing
-    # Routing to completion or error handling
     # ==================================================================================
-    if result.returncode == 0:
-        await ctx.enqueue(
-            {
-                "topic": "marshal.complete",
-                "data": {**input_data, "task": "marshal", "result": success_result},
-            }
-        )
-    else:
-        await ctx.enqueue(
-            {
-                "topic": "marshal.error",
-                "data": {
-                    **input_data,
-                    "task": "marshal",
-                    "result": failure_result,
-                    "returncode": result.returncode,
-                },
-            }
-        )
 
     return

@@ -12,10 +12,10 @@ if utils_path not in sys.path:
 
 from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
-from utils.event_common import check_result
+from utils.event_common import check_result, get_origin_trace_id
 
 config = {
-    "name": "make build",
+    "name": "verilator-build",
     "description": "build verilator executable",
     "flows": ["verilator"],
     "triggers": [queue("verilator.build")],
@@ -24,6 +24,7 @@ config = {
 
 
 async def handler(input_data: dict, ctx: FlowContext) -> None:
+    origin_tid = get_origin_trace_id(input_data, ctx)
     bbdir = get_buckyball_path()
     arch_dir = f"{bbdir}/arch"
     build_dir = f"{arch_dir}/build"
@@ -120,7 +121,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         ctx,
         result.returncode,
         continue_run=input_data.get("from_run_workflow", False),
-        extra_fields={"task": "build"},
+        extra_fields={"task": "build"}, trace_id=origin_tid,
     )
 
     # ==================================================================================

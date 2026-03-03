@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 
 from motia import FlowContext, queue
@@ -10,41 +11,45 @@ if utils_path not in sys.path:
 
 from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
-from utils.event_common import check_result
+from utils.event_common import check_result, get_origin_trace_id
 
 config = {
-    "name": "running sardine",
-    "description": "running sardine",
-    "flows": ["sardine"],
-    "triggers": [queue("sardine.run")],
+    "name": "workload-build",
+    "description": "build workload",
+    "flows": ["workload"],
+    "triggers": [queue("workload.build")],
     "enqueues": [],
 }
 
 
 async def handler(input_data: dict, ctx: FlowContext) -> None:
+    origin_tid = get_origin_trace_id(input_data, ctx)
     bbdir = get_buckyball_path()
+    workload_dir = f"{bbdir}/bb-tests"
+    build_dir = f"{workload_dir}/build"
 
-    sardine_dir = f"{bbdir}/bb-tests/sardine"
+    # os.mkdir(f"{workload_dir}/build", exist_ok=True)
+    subprocess.run(f"rm -rf {build_dir} && mkdir -p {build_dir}", shell=True)
 
-    command = f"python3 run_tests.py -m \"({input_data.get('workload', '')})\""
+    command = f"cd {build_dir} && cmake -G Ninja .. && ninja -j{os.cpu_count()}"
     ctx.logger.info(
-        "Executing sardine command", {"command": command, "cwd": sardine_dir}
+        "Executing workload command", {"command": command, "cwd": build_dir}
     )
     result = stream_run_logger(
         cmd=command,
         logger=ctx.logger,
-        cwd=sardine_dir,
+        cwd=workload_dir,
         executable="bash",
-        stdout_prefix="sardine run",
-        stderr_prefix="sardine run",
+        stdout_prefix="workload build",
+        stderr_prefix="workload build",
     )
 
     # ==================================================================================
-    # Return execution result
+    # Return simulation result
     # ==================================================================================
+    # This is the end of run workflow, status no longer set to processing
     success_result, failure_result = await check_result(
-        ctx, result.returncode, continue_run=False
-    )
+        ctx, result.returncode, continue_run=False, trace_id=origin_tid)
 
     # ==================================================================================
     #  finish workflow
