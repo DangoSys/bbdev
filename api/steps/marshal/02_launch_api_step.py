@@ -1,26 +1,27 @@
 import asyncio
+
+from motia import ApiRequest, ApiResponse, FlowContext, http
+
 from utils.event_common import wait_for_result
 
 config = {
-    "type": "api",
     "name": "Marshal Launch",
     "description": "launch marshal",
-    "path": "/marshal/launch",
-    "method": "POST",
-    "emits": ["marshal.launch"],
     "flows": ["marshal"],
+    "triggers": [http("POST", "/marshal/launch")],
+    "enqueues": ["marshal.launch"],
 }
 
 
-async def handler(req, context):
-    body = req.get("body") or {}
-    await context.emit({"topic": "marshal.launch", "data": body})
+async def handler(request: ApiRequest, ctx: FlowContext) -> ApiResponse:
+    body = request.body or {}
+    await ctx.enqueue({"topic": "marshal.launch", "data": body})
 
     # ==================================================================================
     #  Wait for result
     # ==================================================================================
     while True:
-        result = await wait_for_result(context)
+        result = await wait_for_result(ctx)
         if result is not None:
             return result
         await asyncio.sleep(1)
