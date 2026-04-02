@@ -1,4 +1,9 @@
 modules:
+  # ── Worker Module ──────────────────────────────────────────────────────
+  - class: modules::worker::WorkerModule
+    config:
+      port: 49134
+
   # ── State Module ───────────────────────────────────────────────────────
   - class: modules::state::StateModule
     config:

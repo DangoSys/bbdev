@@ -9,7 +9,6 @@ import shlex
 import json
 import time
 import tempfile
-import re
 import threading
 import requests
 
@@ -78,18 +77,14 @@ WORKFLOW_COMMANDS = {
 ALL_COMMANDS = ["start", "stop"] + list(WORKFLOW_COMMANDS)
 
 
-def make_iii_config(port: int, bridge_port: int) -> str:
-    """Create a temporary config.yaml with the specified ports, return the path."""
+def make_iii_config(port: int, worker_port: int) -> str:
+    """Create a temporary config.yaml with unique HTTP and Worker ports, return the path."""
     base_config = os.path.join(workflow_dir, "config.yaml")
     with open(base_config, "r") as f:
         content = f.read()
-    # Replace the first RestApiModule port occurrence
-    content = re.sub(r"(port:\s*)\d+", rf"\g<1>{port}", content, count=1)
-    # Set bridge_url for QueueModule to use a unique WS port
-    content = content.replace(
-        "class: modules::queue::BuiltinQueueAdapter",
-        f"class: modules::queue::BuiltinQueueAdapter\n        config:\n          bridge_url: ws://0.0.0.0:{bridge_port}",
-    )
+    # Replace WorkerModule port (49134) then RestApiModule port (3111)
+    content = content.replace(f"port: 49134", f"port: {worker_port}", 1)
+    content = content.replace(f"port: 3111", f"port: {port}", 1)
     tmp = tempfile.NamedTemporaryFile(
         mode="w", suffix=".yaml", prefix="iii-config-", dir=workflow_dir, delete=False
     )
@@ -384,9 +379,9 @@ def run_script_mode(args, cmd_info):
 
     api_path = f"/{command}/{cmd_info['operation']}"
 
-    # Each instance gets unique HTTP + bridge ports so multiple users/sardine can run in parallel
+    # Each instance gets unique HTTP + worker ports so multiple users/sardine can run in parallel
     available_port = args.port or find_available_port(start_port=5100, end_port=5500)
-    bridge_port = find_available_port(start_port=49134, end_port=49500)
+    worker_port = find_available_port(start_port=49134, end_port=49500)
     print(f"Starting server on port {available_port}...")
 
     # Clean stale state files from previous runs
@@ -399,12 +394,12 @@ def run_script_mode(args, cmd_info):
                 except OSError:
                     pass
 
-    config_path = make_iii_config(available_port, bridge_port)
+    config_path = make_iii_config(available_port, worker_port)
     iii_output_active = threading.Event()
     iii_output_active.set()
 
-    # Set III_URL so motia connects to the correct bridge port
-    iii_env = {**os.environ, "III_URL": f"ws://localhost:{bridge_port}"}
+    # Set III_URL so motia SDK connects to the correct worker port
+    iii_env = {**os.environ, "III_URL": f"ws://localhost:{worker_port}"}
     proc = subprocess.Popen(
         ["iii", "-c", config_path],
         cwd=workflow_dir,
