@@ -1,33 +1,34 @@
 import os
 import sys
 
+from motia import FlowContext, queue
+
 utils_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if utils_path not in sys.path:
     sys.path.insert(0, utils_path)
 
 from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
-from utils.event_common import check_result
-
+from utils.event_common import check_result, get_origin_trace_id
 
 config = {
-    "type": "event",
     "name": "make pegasus verilog",
     "description": "Generate SystemVerilog from Chisel using ElaboratePegasus",
-    "subscribes": ["pegasus.verilog"],
-    "emits": [],
     "flows": ["pegasus"],
+    "triggers": [queue("pegasus.verilog")],
+    "enqueues": [],
 }
 
 
-async def handler(data, context):
+async def handler(input_data: dict, ctx: FlowContext) -> None:
+    origin_tid = get_origin_trace_id(input_data, ctx)
     bbdir = get_buckyball_path()
     arch_dir = f"{bbdir}/arch"
-    build_dir = data.get("output_dir", f"{bbdir}/arch/build/pegasus/")
+    build_dir = input_data.get("output_dir", f"{bbdir}/arch/build/pegasus/")
 
-    config_name = data.get("config", "sims.pegasus.PegasusConfig")
-    context.logger.info(f"[pegasus] Elaborating config: {config_name}")
-    context.logger.info(f"[pegasus] Output directory: {build_dir}")
+    config_name = input_data.get("config", "sims.pegasus.PegasusConfig")
+    ctx.logger.info(f"[pegasus] Elaborating config: {config_name}")
+    ctx.logger.info(f"[pegasus] Output directory: {build_dir}")
 
     os.makedirs(build_dir, exist_ok=True)
 
@@ -44,7 +45,7 @@ async def handler(data, context):
 
     result = stream_run_logger(
         cmd=command,
-        logger=context.logger,
+        logger=ctx.logger,
         cwd=arch_dir,
         stdout_prefix="pegasus verilog",
         stderr_prefix="pegasus verilog",
@@ -103,10 +104,10 @@ async def handler(data, context):
                     wf.write(build_dpi_stub(src))
             else:
                 shutil.copy2(src, os.path.join(vivado_gen_dir, f))
-        context.logger.info(f"[pegasus] Copied {len(sv_files)} files to {vivado_gen_dir}")
+        ctx.logger.info(f"[pegasus] Copied {len(sv_files)} files to {vivado_gen_dir}")
 
     success_result, failure_result = await check_result(
-        context,
+        ctx,
         result.returncode,
         continue_run=False,
         extra_fields={
@@ -115,6 +116,7 @@ async def handler(data, context):
             "vivado_gen_dir": vivado_gen_dir,
             "top_module": "PegasusHarness",
         },
+        trace_id=origin_tid,
     )
 
     return

@@ -4,6 +4,8 @@ import glob
 import sys
 import yaml
 
+from motia import FlowContext, queue
+
 # Add the utils directory to the Python path
 utils_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if utils_path not in sys.path:
@@ -11,15 +13,14 @@ if utils_path not in sys.path:
 
 from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
-from utils.event_common import check_result
+from utils.event_common import check_result, get_origin_trace_id
 
 config = {
-    "type": "event",
     "name": "yosys synth",
     "description": "run yosys synthesis for area estimation",
-    "subscribes": ["yosys.synth"],
-    "emits": [],
     "flows": ["yosys"],
+    "triggers": [queue("yosys.synth")],
+    "enqueues": [],
 }
 
 
@@ -32,18 +33,19 @@ def load_yosys_config():
     return {}
 
 
-async def handler(data, context):
+async def handler(input_data: dict, ctx: FlowContext) -> None:
+    origin_tid = get_origin_trace_id(input_data, ctx)
     bbdir = get_buckyball_path()
-    build_dir = data.get("output_dir", f"{bbdir}/arch/build/")
+    build_dir = input_data.get("output_dir", f"{bbdir}/arch/build/")
     arch_dir = f"{bbdir}/arch"
 
     # Load yaml config as defaults, CLI args override
     yosys_cfg = load_yosys_config()
-    top_module = data.get("top") or yosys_cfg.get("top") or "BuckyballAccelerator"
+    top_module = input_data.get("top") or yosys_cfg.get("top") or "BuckyballAccelerator"
     liberty = yosys_cfg.get("liberty")  # Path to .lib file, configured in yosys-config.yaml only
-    elaborate_config = data.get("config") or yosys_cfg.get("elaborate_config", "sims.verilator.BuckyballToyVerilatorConfig")
+    elaborate_config = input_data.get("config") or yosys_cfg.get("elaborate_config", "sims.verilator.BuckyballToyVerilatorConfig")
 
-    context.logger.info(f"Top module: {top_module}, Elaborate config: {elaborate_config}")
+    ctx.logger.info(f"Top module: {top_module}, Elaborate config: {elaborate_config}")
 
     # ==================================================================================
     # Step 1: Generate Verilog via Elaborate (full SoC), filter DPI-C files later
@@ -53,7 +55,7 @@ async def handler(data, context):
         shutil.rmtree(build_dir)
     os.makedirs(build_dir, exist_ok=True)
 
-    context.logger.info("Step 1: Generating Verilog via Elaborate...")
+    ctx.logger.info("Step 1: Generating Verilog via Elaborate...")
     verilog_command = (
         f"mill -i __.test.runMain sims.verilator.Elaborate {elaborate_config} "
         "--disable-annotation-unknown -strip-debug-info -O=debug "
@@ -63,19 +65,20 @@ async def handler(data, context):
 
     result = stream_run_logger(
         cmd=verilog_command,
-        logger=context.logger,
+        logger=ctx.logger,
         cwd=arch_dir,
         stdout_prefix="yosys verilog",
         stderr_prefix="yosys verilog",
     )
 
     if result.returncode != 0:
-        context.logger.error(f"Verilog generation failed with code {result.returncode}")
+        ctx.logger.error(f"Verilog generation failed with code {result.returncode}")
         success_result, failure_result = await check_result(
-            context,
+            ctx,
             result.returncode,
             continue_run=False,
             extra_fields={"task": "verilog"},
+            trace_id=origin_tid,
         )
         return failure_result
 
@@ -88,7 +91,7 @@ async def handler(data, context):
     # ==================================================================================
     # Step 2: Run Yosys synthesis for area estimation
     # ==================================================================================
-    context.logger.info("Step 2: Running Yosys synthesis for area estimation...")
+    ctx.logger.info("Step 2: Running Yosys synthesis for area estimation...")
 
     # Collect SystemVerilog sources only (.sv), skip .v files which may contain DPI-C imports
     vsrcs = glob.glob(f"{build_dir}/**/*.sv", recursive=True)
@@ -107,16 +110,17 @@ async def handler(data, context):
     vsrcs = filtered_vsrcs
 
     if skipped:
-        context.logger.info(f"Skipped {len(skipped)} files with unsupported syntax: {', '.join(skipped[:10])}{'...' if len(skipped) > 10 else ''}")
-    context.logger.info(f"Found {len(vsrcs)} synthesizable SystemVerilog source files")
+        ctx.logger.info(f"Skipped {len(skipped)} files with unsupported syntax: {', '.join(skipped[:10])}{'...' if len(skipped) > 10 else ''}")
+    ctx.logger.info(f"Found {len(vsrcs)} synthesizable SystemVerilog source files")
 
     if not vsrcs:
-        context.logger.error(f"No Verilog source files found in {build_dir}")
+        ctx.logger.error(f"No Verilog source files found in {build_dir}")
         success_result, failure_result = await check_result(
-            context,
+            ctx,
             1,
             continue_run=False,
             extra_fields={"task": "synth", "error": "No Verilog source files found"},
+            trace_id=origin_tid,
         )
         return failure_result
 
@@ -137,7 +141,7 @@ async def handler(data, context):
         f.write(f"synth -top {top_module}\n")
 
         if liberty and os.path.exists(liberty):
-            context.logger.info(f"Using liberty file: {liberty}")
+            ctx.logger.info(f"Using liberty file: {liberty}")
             f.write(f"dfflibmap -liberty {liberty}\n")
             f.write(f"abc -liberty {liberty}\n")
 
@@ -153,7 +157,7 @@ async def handler(data, context):
             f.write(f"write_verilog {yosys_output_dir}/synth_netlist.v\n")
         else:
             if liberty:
-                context.logger.warn(f"Liberty file not found: {liberty}, falling back to generic stat")
+                ctx.logger.warn(f"Liberty file not found: {liberty}, falling back to generic stat")
             # Hierarchical breakdown before flatten
             f.write(f"tee -o {yosys_output_dir}/hierarchy_report.txt stat\n")
             f.write("flatten\n")
@@ -161,15 +165,15 @@ async def handler(data, context):
             f.write("stat\n")
             f.write(f"tee -o {yosys_output_dir}/area_report.txt stat\n")
 
-    context.logger.info(f"Yosys script written to {yosys_script}")
-    context.logger.info(f"Synthesizing {len(vsrcs)} source files with top module: {top_module}")
+    ctx.logger.info(f"Yosys script written to {yosys_script}")
+    ctx.logger.info(f"Synthesizing {len(vsrcs)} source files with top module: {top_module}")
 
     # Run yosys
     yosys_command = f"yosys -s {yosys_script}"
 
     result = stream_run_logger(
         cmd=yosys_command,
-        logger=context.logger,
+        logger=ctx.logger,
         cwd=build_dir,
         stdout_prefix="yosys synth",
         stderr_prefix="yosys synth",
@@ -183,7 +187,7 @@ async def handler(data, context):
     timing_report_file = f"{yosys_output_dir}/timing_report.txt"
 
     if liberty and os.path.exists(liberty) and os.path.exists(netlist_file) and result.returncode == 0:
-        context.logger.info("Step 3: Running OpenSTA timing analysis...")
+        ctx.logger.info("Step 3: Running OpenSTA timing analysis...")
 
         # Get target clock period from config (default 10ns = 100MHz)
         clock_period = yosys_cfg.get("clock_period", 10.0)
@@ -202,7 +206,7 @@ async def handler(data, context):
 
         sta_result = stream_run_logger(
             cmd=f"sta {sta_script}",
-            logger=context.logger,
+            logger=ctx.logger,
             cwd=yosys_output_dir,
             stdout_prefix="opensta",
             stderr_prefix="opensta",
@@ -211,11 +215,11 @@ async def handler(data, context):
         if sta_result.returncode == 0 and os.path.exists(timing_report_file):
             with open(timing_report_file, "r") as f:
                 extra["timing_report"] = f.read()
-            context.logger.info(f"Timing report saved to {timing_report_file}")
+            ctx.logger.info(f"Timing report saved to {timing_report_file}")
         else:
-            context.logger.warn(f"OpenSTA timing analysis failed (rc={sta_result.returncode})")
+            ctx.logger.warn(f"OpenSTA timing analysis failed (rc={sta_result.returncode})")
     elif result.returncode == 0:
-        context.logger.info("Skipping OpenSTA: no liberty file configured or synthesis failed")
+        ctx.logger.info("Skipping OpenSTA: no liberty file configured or synthesis failed")
 
     # ==================================================================================
     # Return result to API
@@ -224,19 +228,20 @@ async def handler(data, context):
     if os.path.exists(report_file):
         with open(report_file, "r") as f:
             extra["area_report"] = f.read()
-        context.logger.info(f"Area report saved to {report_file}")
+        ctx.logger.info(f"Area report saved to {report_file}")
 
     hierarchy_file = f"{yosys_output_dir}/hierarchy_report.txt"
     if os.path.exists(hierarchy_file):
         with open(hierarchy_file, "r") as f:
             extra["hierarchy_report"] = f.read()
-        context.logger.info(f"Hierarchy report saved to {hierarchy_file}")
+        ctx.logger.info(f"Hierarchy report saved to {hierarchy_file}")
 
     success_result, failure_result = await check_result(
-        context,
+        ctx,
         result.returncode,
         continue_run=False,
         extra_fields=extra,
+        trace_id=origin_tid,
     )
 
     return
