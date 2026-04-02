@@ -1,3 +1,5 @@
+port: 49134
+
 modules:
   # ── Worker Module ──────────────────────────────────────────────────────
   - class: modules::worker::WorkerModule
@@ -42,6 +44,12 @@ modules:
     config:
       adapter:
         class: modules::pubsub::LocalAdapter
+
+  # ── Observability Module ───────────────────────────────────────────────
+  - class: modules::observability::OtelModule
+    config:
+      enabled: true
+      exporter: memory
 
   # ── Exec Module (Python) ───────────────────────────────────────────────
   - class: modules::shell::ExecModule
