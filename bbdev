@@ -278,6 +278,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         metavar="ARGS",
         help='Generate verilog files from chisel. Args example: "[--config sims.pegasus.PegasusConfig]"',
     )
+    pegasus_group.add_argument(
+        "--buildbitstream",
+        type=str,
+        nargs="?",
+        const="",
+        metavar="ARGS",
+        help='Build AU280 bitstream from pre-generated Verilog. Args example: "[--generated_dir /path] [--output_dir /path]"',
+    )
 
     # Parse arguments, allowing unknown arguments (so --port can work in subcommands)
     args, unknown = parser.parse_known_args(argv)

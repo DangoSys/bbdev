@@ -57,13 +57,52 @@ async def handler(data, context):
             os.remove(stray_path)
 
     # Copy generated SV files to pegasus/vivado/generated/ for Vivado build
+    # DPI files are replaced with synth-safe stubs.
     vivado_gen_dir = f"{bbdir}/pegasus/vivado/generated"
     if result.returncode == 0 and os.path.isdir(build_dir):
+        import re
         import shutil
         os.makedirs(vivado_gen_dir, exist_ok=True)
+        for f in os.listdir(vivado_gen_dir):
+            if f.endswith(".sv") or f.endswith(".v"):
+                os.remove(os.path.join(vivado_gen_dir, f))
+
+        def build_dpi_stub(src_path: str) -> str:
+            text = open(src_path, "r", encoding="utf-8").read()
+            m = re.search(r"module\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*?)\);\s*", text, re.S)
+            if m is None:
+                raise RuntimeError(f"invalid DPI module format: {src_path}")
+            mod_name = m.group(1)
+            ports_block = m.group(2).rstrip()
+            outputs = []
+            for line in ports_block.splitlines():
+                s = line.strip()
+                if not s.startswith("output"):
+                    continue
+                s = s.rstrip(",")
+                s = re.sub(r"^output\s+", "", s)
+                s = re.sub(r"^\[[^\]]+\]\s+", "", s)
+                for name in s.split(","):
+                    n = name.strip()
+                    if n:
+                        outputs.append(n)
+            stub = [f"module {mod_name}(", ports_block, ");"]
+            for out_name in outputs:
+                stub.append(f"  assign {out_name} = '0;")
+            stub.append("endmodule")
+            stub.append("")
+            return "\n".join(stub)
+
         sv_files = [f for f in os.listdir(build_dir) if f.endswith(".sv") or f.endswith(".v")]
         for f in sv_files:
-            shutil.copy2(os.path.join(build_dir, f), os.path.join(vivado_gen_dir, f))
+            src = os.path.join(build_dir, f)
+            if "DPI" in f:
+                stub_name = f"stub_{os.path.splitext(f)[0].replace('DPI', '')}.sv"
+                stub_path = os.path.join(vivado_gen_dir, stub_name)
+                with open(stub_path, "w", encoding="utf-8") as wf:
+                    wf.write(build_dpi_stub(src))
+            else:
+                shutil.copy2(src, os.path.join(vivado_gen_dir, f))
         context.logger.info(f"[pegasus] Copied {len(sv_files)} files to {vivado_gen_dir}")
 
     success_result, failure_result = await check_result(
