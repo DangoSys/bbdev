@@ -24,7 +24,7 @@ NO_PROXY = {"http": None, "https": None, "all": None}
 WORKFLOW_COMMANDS = {
     "verilator": {
         "clean": True,
-        "verilog": 'Generate verilog files. Args: "[--balltype <type>] [--job <num>] [--batch]"',
+        "verilog": 'Generate verilog files. Args: "[--balltype <type>] [--moduletype <memdomain|membackend>] --config <full.config.ClassName> [--output_dir <dir>]"',
         "build": 'Build simulation executable. Args: "[--job <num>]"',
         "sim": 'Run simulation. Args: "--binary <path> [--batch]"',
         "run": 'Integrated build+sim+run. Args: "--binary <path> [--batch] [--job <num>]"',

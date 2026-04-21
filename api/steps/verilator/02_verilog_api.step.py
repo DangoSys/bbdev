@@ -27,9 +27,20 @@ async def handler(request: ApiRequest, ctx: FlowContext) -> ApiResponse:
             },
         )
 
+    if body.get("balltype") and body.get("moduletype"):
+        return ApiResponse(
+            status=400,
+            body={
+                "status": "error",
+                "message": "--balltype and --moduletype are mutually exclusive. Please specify only one.",
+                "example": 'bbdev verilator --verilog "--moduletype memdomain --config sims.verilator.BuckyballToyVerilatorConfig"',
+            },
+        )
+
     data = {
         "config": config_name,
         "balltype": body.get("balltype"),
+        "moduletype": body.get("moduletype"),
         "output_dir": body.get("output_dir", f"{bbdir}/arch/build/"),
     }
     await ctx.enqueue({"topic": "verilator.verilog", "data": {**data, "_trace_id": ctx.trace_id}})

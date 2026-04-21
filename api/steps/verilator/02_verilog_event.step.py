@@ -53,6 +53,13 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         command = (
             f"mill -i __.test.runMain sims.verify.BallTopMain {input_data.get('balltype')} "
         )
+    elif input_data.get("moduletype"):
+        if input_data.get("moduletype").lower() == "memdomain":
+            command = "mill -i __.test.runMain sims.verify.MemDomainTopMain "
+        else:
+            command = (
+                f"mill -i __.test.runMain sims.verify.ModuleTopMain {input_data.get('moduletype')} "
+            )
     else:
         command = f"mill -i __.test.runMain sims.verilator.Elaborate {config_name} "
 
