@@ -3,11 +3,11 @@ from motia import ApiRequest, ApiResponse, FlowContext, api
 from utils.path import get_buckyball_path
 
 config = {
-    "name": "dc-run",
-    "description": "run Design Compiler synthesis",
-    "flows": ["dc"],
-    "triggers": [api("POST", "/dc/run")],
-    "enqueues": ["dc.run"],
+    "name": "yosys-run",
+    "description": "run yosys flow",
+    "flows": ["yosys"],
+    "triggers": [api("POST", "/yosys/run")],
+    "enqueues": ["yosys.run"],
 }
 
 
@@ -21,5 +21,5 @@ async def handler(req: ApiRequest, ctx: FlowContext) -> ApiResponse:
         "config": body.get("config"),
         "from_run_workflow": True,
     }
-    await ctx.enqueue({"topic": "dc.run", "data": {**data, "_trace_id": ctx.trace_id}})
+    await ctx.enqueue({"topic": "yosys.run", "data": {**data, "_trace_id": ctx.trace_id}})
     return ApiResponse(status=202, body={"trace_id": ctx.trace_id})
