@@ -12,11 +12,15 @@ from utils.path import get_buckyball_path
 from utils.stream_run import stream_run_logger
 from utils.event_common import check_result, get_origin_trace_id
 
+# Import firesim_env from scripts subdirectory
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scripts"))
+from firesim_env import setup_firesim_env
+
 config = {
-    "name": "firesim-infrasetup",
-    "description": "infrasetup",
+    "name": "firesim-enumeratefpgas",
+    "description": "enumerate FPGAs",
     "flows": ["firesim"],
-    "triggers": [queue("firesim.infrasetup")],
+    "triggers": [queue("firesim.enumeratefpgas")],
     "enqueues": [],
 }
 
@@ -26,10 +30,14 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     bbdir = get_buckyball_path()
     script_dir = f"{bbdir}/bbdev/api/steps/firesim/scripts"
     yaml_dir = f"{script_dir}/yaml"
+
+    # Setup FireSim environment variables and SSH agent
+    env = setup_firesim_env()
+
     # ==================================================================================
     # Execute operation
     # ==================================================================================
-    command = f"firesim infrasetup "
+    command = f"firesim enumeratefpgas"
     command += f" -a {yaml_dir}/config_hwdb.yaml"
     command += f" -b {yaml_dir}/config_build.yaml"
     command += f" -r {yaml_dir}/config_build_recipes.yaml"
@@ -37,8 +45,9 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     result = stream_run_logger(
         cmd=command,
         logger=ctx.logger,
-        stdout_prefix="firesim infrasetup",
-        stderr_prefix="firesim infrasetup",
+        stdout_prefix="firesim enumeratefpgas",
+        stderr_prefix="firesim enumeratefpgas",
+        env=env,
     )
 
     # ==================================================================================
