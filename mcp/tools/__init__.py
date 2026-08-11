@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from . import validate
 from . import task_status
+from . import task_cancel
 from . import compiler_build
 from . import workload_clean
 from . import workload_build
@@ -29,6 +30,7 @@ from . import bebop_p2e_buildbitstream
 from . import bebop_p2e_runworkload
 from . import bebop_p2e_batch
 from . import dc_verilog
+from . import ip_replace
 from . import firesim_enumeratefpgas
 from . import firesim_buildbitstream
 from . import firesim_infrasetup
@@ -41,6 +43,7 @@ from . import yosys_synth
 MODULES = [
     validate,
     task_status,
+    task_cancel,
     compiler_build,
     workload_clean,
     workload_build,
@@ -66,6 +69,7 @@ MODULES = [
     bebop_p2e_runworkload,
     bebop_p2e_batch,
     dc_verilog,
+    ip_replace,
     firesim_enumeratefpgas,
     firesim_buildbitstream,
     firesim_infrasetup,
