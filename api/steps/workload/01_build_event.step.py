@@ -40,6 +40,11 @@ MODEL_LAYOUT = {
     "buddynext": "BuddyNext",
 }
 
+# CLI model → -DMODEL cmake value for workload builds.
+MODEL_CMAKE = {
+    "alexnet": "alexnet",
+}
+
 
 def chips_for_model(bbdir: str, model_key: str) -> set[str]:
     """Chips that currently ship a layout for this model (many-to-many)."""
