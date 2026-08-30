@@ -74,7 +74,13 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         )
         return
 
-    vsrc_dir = rtl_dir(bbdir, chip, "verilog", input_data.get("vsrc_dir"))
+    vsrc_dir = rtl_dir(
+        bbdir,
+        chip,
+        "verilog",
+        input_data.get("vsrc_dir"),
+        rushb=bool(input_data.get("rushB", False)),
+    )
     ctx.logger.info(f"Using verilog source directory: {vsrc_dir}")
     build_dir = bebop_dir
     chip = input_data.get("chip")
