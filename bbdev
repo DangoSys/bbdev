@@ -78,7 +78,7 @@ WORKFLOW_COMMANDS = {
         "clean": 'Clean Bebop P2E build directory. Args: "--chip <chip> [--output-dir <dir>]"',
         "verilog": 'Generate Bebop P2E SystemVerilog for DDR4 backdoor. Args: "--chip <chip> [--output-dir <dir>]"',
         "buildbitstream": 'Build Bebop P2E runtime case. Args: "--chip <chip> [--vsrc-dir <dir>] [--output-dir <dir>]"',
-        "runworkload": 'Run Bebop P2E workload. Args: "--image <path> --bitstream <path> [--multi-fpga] [--wave] [--wave-start <cycle>] [--itrace] [--mtrace] [--pmctrace]"',
+        "runworkload": 'Run Bebop P2E workload. Args: "--image <path> --bitstream <path> [--multi-fpga] [--wave] [--wave-start <cycle>] [--diff --golden-elf <path> [--golden-pk]] [--itrace] [--mtrace] [--pmctrace]"',
         "batch": 'Run Bebop p2e nextest batch regression (serial). Args: "--chip <chip> --bitstream <path> --test <elf-tests|pk-tests>"',
     },
     "dc": {
@@ -323,6 +323,8 @@ def _parse_sub_args(arg_string: str) -> dict:
                 key, value = token[2:].split("=", 1)
                 if not key or value == "":
                     raise ValueError(f"Invalid argument: {token}")
+                if value in ("true", "false"):
+                    value = value == "true"
                 args_dict[key] = value
                 i += 1
             else:

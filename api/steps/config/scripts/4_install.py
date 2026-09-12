@@ -125,6 +125,59 @@ def install_bemu(chip: pb.Chip, bbdir: Path, gen: Path) -> Path:
     return bemu / "Cargo.toml"
 
 
+def install_bebop(gen: Path) -> Path:
+    bebop = gen.parent.parent / "generated" / "bebop"
+    bebop.mkdir(parents=True, exist_ok=True)
+    manifest = bebop / "Cargo.toml"
+    manifest.write_text(
+        """[workspace]
+resolver = "2"
+
+[package]
+name = "bebop"
+version = "0.1.0"
+edition = "2021"
+build = "../../../../../bebop/build.rs"
+
+[[bin]]
+name = "bebop"
+path = "../../../../../bebop/src/main.rs"
+
+[features]
+default = []
+verilator = ["dep:bebop-verilator"]
+p2e = ["dep:bebop-p2e"]
+bemu = ["dep:bebop-bemu"]
+difftest = ["bebop-bemu/difftest"]
+
+[dependencies]
+bebop-verilator = { path = "../../../../../bebop/src/nodes/verilator", optional = true }
+bebop-p2e = { path = "../../../../../bebop/src/nodes/p2e", optional = true }
+bebop-bemu = { path = "../../configs/generated/bemu", optional = true }
+bebop-dasm = { path = "../../../../../bebop/src/nodes/lib/dasm" }
+bebop-bank-hash = { path = "../../../../../bebop/src/nodes/lib/bank-hash" }
+bebop-bemu-profile = { path = "../../../../../bebop/src/nodes/lib/bemu-profile" }
+bebop-fd-redirect = { path = "../../../../../bebop/src/nodes/lib/fd-redirect" }
+bebop-rtl-trace = { path = "../../../../../bebop/src/nodes/lib/rtl-trace" }
+bebop-uart = { path = "../../../../../bebop/src/nodes/lib/uart" }
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+log = "0.4"
+env_logger = "0.11"
+nix = { version = "0.29", features = ["fs", "mman", "signal", "process"] }
+toml = "0.8"
+ctrlc = "3"
+camino = "1.1"
+snafu = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+duct = "0.13"
+""",
+        encoding="utf-8",
+    )
+    return manifest
+
+
 def install_workload(chip: pb.Chip, bbdir: Path, name: str, gen: Path) -> Path:
     if not chip.profiles:
         raise ValueError(f"chip {name}: no compiler profiles")
