@@ -59,7 +59,8 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     os.makedirs(build_dir, exist_ok=True)
 
     build_cmd = (
-        f"nix develop --ignore-environment --keep HOME --keep ALL_PROXY -c "
+        f"nix develop --ignore-env --keep-env-var HOME --keep-env-var ALL_PROXY "
+        f"--keep-env-var CARGO_TARGET_DIR -c "
         f"cargo run --release --features p2e -- build p2e "
         f"--rtl-dir=\"{vsrc_dir}\" "
         f"--out-dir=\"{build_dir}\""

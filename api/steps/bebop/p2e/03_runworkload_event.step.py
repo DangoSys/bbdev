@@ -9,6 +9,7 @@ Loads a kernel image into FPGA and runs the workload via bebop CLI:
 import glob
 import os
 import re
+import shlex
 import sys
 from datetime import datetime
 
@@ -51,6 +52,41 @@ def case_uses_multi_fpga(build_dir: str) -> bool:
     return len([path for path in part_dirs if os.path.isdir(path)]) > 1
 
 
+def runtime_build_command(bbdir: str, chip: str, diff: bool, vsrc_dir: str, build_dir: str) -> tuple[str, str]:
+    manifest = Path(bbdir) / "bebop" / "Cargo.toml"
+    features = ["p2e"]
+    if diff:
+        manifest = Path(bbdir) / "examples" / "chips" / chip / "generated" / "bebop" / "Cargo.toml"
+        features.extend(["bemu", "difftest"])
+    command = shlex.join(
+        [
+            "env",
+            "BEBOP_P2E_RUNTIME_ONLY=1",
+            "BEBOP_P2E_REBUILD_RUNTIME=1",
+            f"VSRC_PATH={vsrc_dir}",
+            f"OUT_PATH={build_dir}",
+            "cargo",
+            "run",
+            "--release",
+            "--manifest-path",
+            str(manifest),
+            "--bin",
+            "bebop",
+            "--features",
+            ",".join(features),
+            "--",
+            "build",
+            "p2e",
+            "--rtl-dir",
+            vsrc_dir,
+            "--out-dir",
+            build_dir,
+            *(["--diff"] if diff else []),
+        ]
+    )
+    return command, str(manifest.parent)
+
+
 async def handler(input_data: dict, ctx: FlowContext) -> None:
     origin_tid = get_origin_trace_id(input_data, ctx)
     try:
@@ -79,6 +115,27 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         )
         return
     wave = bool(input_data.get("wave", False))
+    diff = bool(input_data.get("diff", False))
+    golden_elf = input_data.get("golden-elf", "")
+    golden_pk = bool(input_data.get("golden-pk", False))
+    if diff and not golden_elf:
+        ctx.logger.error("--diff requires --golden-elf <path>")
+        await check_result(
+            ctx, 1, continue_run=False,
+            extra_fields={"error": "missing_golden_elf"},
+            trace_id=origin_tid,
+        )
+        return
+    if diff and not os.path.isfile(golden_elf):
+        ctx.logger.error(f"BEMU golden ELF not found: {golden_elf}")
+        await check_result(
+            ctx, 1, continue_run=False,
+            extra_fields={"error": "golden_elf_not_found", "golden_elf": golden_elf},
+            trace_id=origin_tid,
+        )
+        return
+    if diff:
+        golden_elf = os.path.abspath(golden_elf)
     if "wave_start" in input_data:
         ctx.logger.error("invalid parameter: --wave_start (use --wave-start)")
         await check_result(
@@ -152,27 +209,42 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
 
     # Rebuild the VVAC host runtime in the bitstream case.  The bitstream is
     # deliberately left in place, so runtime/DPIC changes never trigger FPGA synthesis.
-    runtime_cmd = (
-        f"env BEBOP_P2E_RUNTIME_ONLY=1 BEBOP_P2E_REBUILD_RUNTIME=1 "
-        f"cargo run --release --features p2e -- build p2e "
-        f"--rtl-dir=\"{vsrc_dir}\" "
-        f"--out-dir=\"{build_dir}\""
-    )
+    runtime_cmd, runtime_cwd = runtime_build_command(bbdir, chip, diff, vsrc_dir, build_dir)
+    runtime_env = {**os.environ.copy(), **bebop_cargo_env(bbdir, chip)}
+    if diff:
+        hpec_home = "/home/x-epic/hpe-24.12.01.s008"
+        runtime_env["BEBOP_BEMU_P2E_ABI"] = "1"
+        runtime_env["BEBOP_BEMU_CC"] = os.path.join(
+            hpec_home, "tools", "gcc-8.3.0", "gcc-8.3.0", "bin", "gcc"
+        )
+        runtime_env["BEBOP_BEMU_CXX"] = os.path.join(
+            hpec_home, "tools", "gcc-8.3.0", "gcc-8.3.0", "bin", "g++"
+        )
+        runtime_env["BEBOP_BEMU_DTC"] = os.path.join(bbdir, "result", "bin", "dtc")
+        runtime_env["CARGO_TARGET_DIR"] = os.path.join(bebop_dir, "target", f"{chip}-p2e-diff")
+        compiler_libs = [
+            os.path.join(hpec_home, "tools", "gcc-8.3.0", "gmp-6.2.1", "lib"),
+            os.path.join(hpec_home, "tools", "gcc-8.3.0", "mpfr-4.1.0", "lib"),
+            os.path.join(hpec_home, "tools", "gcc-8.3.0", "mpc-1.2.1", "lib"),
+        ]
+        runtime_env["BEBOP_BEMU_COMPILER_LIBRARY_PATH"] = ":".join(compiler_libs)
     ctx.logger.info("Preparing bebop p2e runtime for the selected bitstream ...")
     runtime_result = await stream_run_logger_async(
         cmd=runtime_cmd,
         logger=ctx.logger,
-        cwd=bebop_dir,
+        cwd=runtime_cwd,
         stdout_prefix="bebop p2e runtime",
         stderr_prefix="bebop p2e runtime",
-        env={**os.environ.copy(), **bebop_cargo_env(bbdir, chip)},
+        env=runtime_env,
     )
     runtime_lib_dir = os.path.join(build_dir, "vvacDir", "runtimeDir", "lib", "lib_arm")
     rtcfg_path = os.path.join(build_dir, "vvacDir", "runtimeDir", "rtcfg")
     libvctb_path = os.path.join(runtime_lib_dir, "libvCtb.so")
     libstdcxx_path = os.path.join(runtime_lib_dir, "libstdc++.so.6")
     bebop_p2e_path = os.path.join(build_dir, "bebop-p2e")
-    runtime_artifacts = (rtcfg_path, libvctb_path, libstdcxx_path, bebop_p2e_path)
+    runtime_artifacts = [rtcfg_path, libvctb_path, libstdcxx_path, bebop_p2e_path]
+    if diff:
+        runtime_artifacts.append(os.path.join(build_dir, "libriscv.so"))
     if runtime_result.returncode != 0 or not all(os.path.isfile(path) for path in runtime_artifacts):
         missing = [path for path in runtime_artifacts if not os.path.isfile(path)]
         if missing:
@@ -208,6 +280,10 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         run_cmd += " --wave"
     if wave_start is not None:
         run_cmd += f" --wave-start=\"{wave_start}\""
+    if diff:
+        run_cmd += f" --diff --golden-elf={shlex.quote(golden_elf)}"
+    if golden_pk:
+        run_cmd += " --golden-pk"
     for trace_name in ("itrace", "mtrace", "pmctrace", "ctrace", "banktrace"):
         if input_data.get(trace_name, False):
             run_cmd += f" --{trace_name}"
@@ -241,6 +317,8 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
             "fpga_location": fpga_location,
             "bdb_trace": os.path.join(run_log, "bdb.ndjson"),
             "uart_log": os.path.join(run_log, "uart.log"),
+            "bank_diff": os.path.join(run_log, "bank_diff.ndjson") if diff else None,
+            "diff": diff,
             "timestamp": timestamp,
         },
         trace_id=origin_tid,
