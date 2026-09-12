@@ -19,7 +19,14 @@ scripts_path = os.path.join(os.path.dirname(__file__), "scripts")
 if scripts_path not in sys.path:
     sys.path.insert(0, scripts_path)
 
-from utils.path import bebop_cargo_env, bebop_target_dir, get_buckyball_path, log_dir, workloads_output_root
+from utils.path import (
+    bebop_cargo_env,
+    bebop_target_dir,
+    get_buckyball_path,
+    log_dir,
+    workload_build_dir,
+    workloads_output_root,
+)
 from utils.stream_run import stream_run_logger_async
 from utils.search_workload import search_workload
 from utils.event_common import check_result, get_origin_trace_id
@@ -284,7 +291,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     perfetto_path = None
     if perfetto_target:
         perfetto_cmd = (
-            f"cmake --build {shlex.quote(f'{bbdir}/bb-tests/build')} "
+            f"cmake --build {shlex.quote(workload_build_dir(bbdir, chip))} "
             f"--target {shlex.quote(perfetto_target)}"
         )
         ctx.logger.info(f"Generating Perfetto trace: {perfetto_cmd}")
