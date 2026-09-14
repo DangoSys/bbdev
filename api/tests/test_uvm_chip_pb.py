@@ -28,12 +28,13 @@ def test_defines():
     c = _chip()
     d = ball_domain(c)
     m = selected_mappings(d, "lut")[0]
-    defs = vcs_defines(d, m)
+    defs = vcs_defines(d, m, 1024)
     assert defs == [
         "+define+BB_IN_BW=2",
         "+define+BB_OUT_BW=1",
         "+define+BB_MMIO_READ_BW=0",
         "+define+BB_MMIO_WRITE_BW=0",
+        "+define+BB_BANK_ADDR_W=10",
         "+define+LUT_FUNCT7=66",
     ]
 
