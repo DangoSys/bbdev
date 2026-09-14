@@ -8,7 +8,9 @@ from pathlib import Path
 def get_buckyball_path():
     current_dir = os.path.dirname(__file__)
     # bbdev/api/utils -> bbdev/api -> bbdev -> buckyball
-    inferred = os.path.realpath(os.path.dirname(os.path.dirname(os.path.dirname(current_dir))))
+    inferred = os.path.realpath(
+        os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+    )
 
     root = os.environ.get("BUCKYBALL_ROOT")
     if root:
@@ -41,6 +43,10 @@ def _chip_name(chip):
 def chip_output_root(bbdir, chip):
     chip = _chip_name(chip)
     return os.path.join(bbdir, "bb-tests", "output", chip)
+
+
+def workloads_output_root(bbdir):
+    return os.path.join(bbdir, "bb-tests", "output")
 
 
 def workload_build_dir(bbdir, chip):
