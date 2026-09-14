@@ -8,12 +8,14 @@ from pathlib import Path
 utils_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if utils_path not in sys.path:
     sys.path.insert(0, utils_path)
-config_scripts = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "config", "scripts"))
-if config_scripts not in sys.path:
-    sys.path.insert(0, config_scripts)
 
 from utils.path import get_buckyball_path, log_dir
 from utils.stream_run import stream_run_logger
+
+config_scripts = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "config", "scripts")
+)
+sys.path.insert(0, config_scripts)
 
 
 def load_chip(bbdir: str, chip: str):
@@ -48,12 +50,13 @@ def selected_mappings(domain, ball: str | None):
     raise ValueError(f"ball {ball!r} not in chip.pb")
 
 
-def vcs_defines(domain, mapping):
+def vcs_defines(domain, mapping, bank_entries: int):
     defs = [
         f"+define+BB_IN_BW={mapping.in_bw}",
         f"+define+BB_OUT_BW={mapping.out_bw}",
         f"+define+BB_MMIO_READ_BW={mapping.mmio_read_bw}",
         f"+define+BB_MMIO_WRITE_BW={mapping.mmio_write_bw}",
+        f"+define+BB_BANK_ADDR_W={(bank_entries - 1).bit_length()}",
     ]
     for e in domain.isa:
         if e.bid == mapping.ball_id:
@@ -61,7 +64,9 @@ def vcs_defines(domain, mapping):
     return defs
 
 
-def _filelist(verify_dir: Path, ball_dir: str, uvm_rel: str, rtl_rel: str, sim_dir: Path) -> str:
+def _filelist(
+    verify_dir: Path, ball_dir: str, uvm_rel: str, rtl_rel: str, sim_dir: Path
+) -> str:
     src = verify_dir / "filelists" / f"{ball_dir}_ball.f"
     dst = sim_dir / f"{ball_dir}_ball.f"
     sim_dir.mkdir(parents=True, exist_ok=True)
@@ -75,6 +80,7 @@ def build_ball(bbdir: str, chip_name: str, mill_cfg: str, domain, mapping, ctx) 
     verify_dir = Path(bbdir) / "examples" / "balls" / ball / "verify"
     casegen = verify_dir / "casegen" / "Cargo.toml"
     rtl_dir = Path(bbdir) / "arch" / "build" / chip_name / mill_cfg
+    bank_entries = load_chip(bbdir, chip_name).cores[0].mem.bank.entries
     sim_dir = verify_dir / "build" / chip_name
     uvm_rel = os.path.relpath(Path(bbdir) / "verify" / "uvm", verify_dir)
     rtl_rel = os.path.relpath(rtl_dir, verify_dir)
@@ -100,7 +106,7 @@ def build_ball(bbdir: str, chip_name: str, mill_cfg: str, domain, mapping, ctx) 
         f"mkdir -p {shlex.quote(str(sim_dir))} {shlex.quote(str(csrc))} && "
         "vcs -full64 -sverilog -timescale=1ns/1ps -debug_access+all "
         "${=VCS_UVM_ARGS} "
-        + " ".join(shlex.quote(d) for d in vcs_defines(domain, mapping))
+        + " ".join(shlex.quote(d) for d in vcs_defines(domain, mapping, bank_entries))
         + f" -cm line+cond+tgl+assert -cm_hier {shlex.quote(str(hier))} "
         f"-Mdir={shlex.quote(str(csrc))} -o {shlex.quote(str(simv))} "
         f"-f {shlex.quote(flist)}"
