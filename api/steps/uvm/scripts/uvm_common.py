@@ -12,12 +12,13 @@ config_scripts = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "
 if config_scripts not in sys.path:
     sys.path.insert(0, config_scripts)
 
-import chip_pb2
 from utils.path import get_buckyball_path, log_dir
 from utils.stream_run import stream_run_logger
 
 
 def load_chip(bbdir: str, chip: str):
+    import chip_pb2
+
     path = Path(bbdir) / "examples" / "chips" / chip / "configs" / "generated" / "chip.pb"
     msg = chip_pb2.Chip()
     msg.ParseFromString(path.read_bytes())
