@@ -614,6 +614,7 @@ def run_script_mode(args, cmd_info):
     # Serialize only engine startup. The reservation socket must be released before
     # iii can bind it, so without this lock another bbdev can select the same port
     # during that handoff.
+    os.makedirs(os.path.dirname(SERVER_START_LOCK), exist_ok=True)
     server_start_lock = open(SERVER_START_LOCK, "w")
     fcntl.flock(server_start_lock, fcntl.LOCK_EX)
 
