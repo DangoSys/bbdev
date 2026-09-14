@@ -13,19 +13,14 @@ from utils.path import get_buckyball_path, log_dir
 from utils.stream_run import stream_run_logger
 from .waive import apply_waivers
 
+config_scripts = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "config", "scripts")
+)
+sys.path.insert(0, config_scripts)
+
 
 def load_chip(bbdir: str, chip: str):
-    config_scripts = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "config", "scripts")
-    )
-    if config_scripts not in sys.path:
-        sys.path.insert(0, config_scripts)
-    try:
-        import chip_pb2
-    except ImportError as e:
-        raise FileNotFoundError(
-            f"missing {os.path.join(config_scripts, 'chip_pb2.py')}; run bbdev config --install"
-        ) from e
+    import chip_pb2
     path = Path(bbdir) / "examples" / "chips" / chip / "configs" / "generated" / "chip.pb"
     if not path.is_file():
         raise FileNotFoundError(f"missing {path}; run bbdev config --install")
