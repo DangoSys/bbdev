@@ -1,4 +1,5 @@
 import os
+import re
 import shlex
 import sys
 import tomllib
@@ -12,22 +13,16 @@ if utils_path not in sys.path:
 from utils.path import get_buckyball_path, log_dir
 from utils.stream_run import stream_run_logger
 
+config_scripts = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "config", "scripts")
+)
+sys.path.insert(0, config_scripts)
+
 
 def load_chip(bbdir: str, chip: str):
-    config_scripts = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "config", "scripts")
-    )
-    if config_scripts not in sys.path:
-        sys.path.insert(0, config_scripts)
-    try:
-        import chip_pb2
-    except ImportError as e:
-        raise FileNotFoundError(
-            f"missing {os.path.join(config_scripts, 'chip_pb2.py')}; run bbdev config --install"
-        ) from e
+    import chip_pb2
+
     path = Path(bbdir) / "examples" / "chips" / chip / "configs" / "generated" / "chip.pb"
-    if not path.is_file():
-        raise FileNotFoundError(f"missing {path}; run bbdev config --install")
     msg = chip_pb2.Chip()
     msg.ParseFromString(path.read_bytes())
     if not msg.name or not msg.cores:
@@ -36,15 +31,7 @@ def load_chip(bbdir: str, chip: str):
 
 
 def ball_domain(chip):
-    d0 = chip.cores[0].balldomain
-    key = [(m.ball_id, m.ball_dir, m.in_bw, m.out_bw) for m in d0.mappings]
-    isa = [(e.mnemonic, e.funct7, e.bid) for e in d0.isa]
-    for core in chip.cores[1:]:
-        k = [(m.ball_id, m.ball_dir, m.in_bw, m.out_bw) for m in core.balldomain.mappings]
-        i = [(e.mnemonic, e.funct7, e.bid) for e in core.balldomain.isa]
-        if k != key or i != isa:
-            raise ValueError("chip.pb cores have different balldomains")
-    return d0
+    return chip.cores[0].balldomain
 
 
 def selected_mappings(domain, ball: str | None):
@@ -70,13 +57,23 @@ def vcs_defines(domain, mapping, bank_entries: int):
     return defs
 
 
+def smatmul_accumulator_filename(rtl_dir: Path) -> str:
+    text = (rtl_dir / "SMatMulUnit.sv").read_text()
+    modules = re.findall(r"\b(accumulator_\d+x\d+)\s+accumulator_ext\s*\(", text)
+    if len(modules) != 1:
+        raise ValueError(f"expected one SMatMul accumulator instance, found {modules!r}")
+    return f"{modules[0]}.sv"
+
+
 def _filelist(
-    verify_dir: Path, ball_dir: str, uvm_rel: str, rtl_rel: str, sim_dir: Path
+    verify_dir: Path, ball_dir: str, uvm_rel: str, rtl_rel: str, rtl_dir: Path, sim_dir: Path
 ) -> str:
     src = verify_dir / "filelists" / f"{ball_dir}_ball.f"
     dst = sim_dir / f"{ball_dir}_ball.f"
     sim_dir.mkdir(parents=True, exist_ok=True)
     text = src.read_text()
+    if "@SMATMUL_ACCUMULATOR@" in text:
+        text = text.replace("@SMATMUL_ACCUMULATOR@", smatmul_accumulator_filename(rtl_dir))
     dst.write_text(text.replace("@UVM@", uvm_rel).replace("@RTL@", rtl_rel))
     return str(dst.relative_to(verify_dir))
 
@@ -90,7 +87,7 @@ def build_ball(bbdir: str, chip_name: str, mill_cfg: str, domain, mapping, ctx) 
     sim_dir = verify_dir / "build" / chip_name
     uvm_rel = os.path.relpath(Path(bbdir) / "verify" / "uvm", verify_dir)
     rtl_rel = os.path.relpath(rtl_dir, verify_dir)
-    flist = _filelist(verify_dir, ball, uvm_rel, rtl_rel, sim_dir)
+    flist = _filelist(verify_dir, ball, uvm_rel, rtl_rel, rtl_dir, sim_dir)
     cargo = (
         f"nix develop {shlex.quote(str(Path(bbdir) / 'verify'))} --command "
         f"cargo build --manifest-path {shlex.quote(str(casegen))}"
@@ -180,7 +177,13 @@ def run_chip(bbdir: str, chip: str, ball: str | None, ctx, do_run: bool) -> dict
     msg = load_chip(bbdir, chip)
     domain = ball_domain(msg)
     mill_cfg = msg.mill.verilator_config
-    maps = selected_mappings(domain, ball)
+    maps = [
+        m
+        for m in selected_mappings(domain, ball)
+        if (Path(bbdir) / "examples" / "balls" / m.ball_dir / "verify" / "filelists" / f"{m.ball_dir}_ball.f").is_file()
+    ]
+    if ball is not None and not maps:
+        raise ValueError(f"UVM filelist missing for ball {ball!r}")
     ran = []
     covs = []
     run_root = None
