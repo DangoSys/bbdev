@@ -48,7 +48,15 @@ def test_unknown_ball():
     raise AssertionError("expected ValueError")
 
 
+def test_heterogeneous_chip_uses_first_domain():
+    c = _chip()
+    other = c.cores.add()
+    other.balldomain.mappings.add().ball_dir = "gemmini"
+    assert [m.ball_dir for m in ball_domain(c).mappings] == ["lut"]
+
+
 if __name__ == "__main__":
     test_defines()
     test_unknown_ball()
+    test_heterogeneous_chip_uses_first_domain()
     print("ok")
