@@ -12,6 +12,7 @@ import re
 import shlex
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from motia import FlowContext, queue
 
