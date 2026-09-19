@@ -170,14 +170,19 @@ message GpDomainConfig {
   string source_path = 7;
 }
 
-message CoreParamConfig {
-  uint32 core_data_bytes = 1;
-  uint32 x_len = 2;
-  uint32 vaddr_bits = 3;
-  uint32 paddr_bits = 4;
-  uint32 pg_idx_bits = 5;
-  uint32 n_pmps = 6;
-  string source_path = 7;
+message CpuConfig {
+  string kind = 1;
+  oneof cpu {
+    RocketCoreConfig rocket = 2;
+    BoomCoreConfig boom = 3;
+  }
+  string source_path = 4;
+  uint32 core_data_bytes = 5;
+  uint32 x_len = 6;
+  uint32 vaddr_bits = 7;
+  uint32 paddr_bits = 8;
+  uint32 pg_idx_bits = 9;
+  uint32 n_pmps = 10;
 }
 
 message CoreInstance {
@@ -188,12 +193,9 @@ message CoreInstance {
   BallDomain balldomain = 5;
   MemDomainConfig mem = 6;
   string balldomain_base_dir = 7;
-  RocketCoreConfig rocket_core = 8;
+  CpuConfig cpu = 8;
   FrontendConfig frontend = 9;
   GpDomainConfig gp_domain = 10;
-  CoreParamConfig core = 11;
-  string kind = 12;
-  BoomCoreConfig boom_core = 13;
 }
 
 message BemuBall {

@@ -147,25 +147,12 @@ def _fill_boom(msg: pb.BoomCoreConfig, d: dict[str, Any]) -> None:
     msg.icache.n_ways = ic["nWays"]
 
 
-def _check_core_kind(raw: dict[str, Any], pkg: str) -> str:
-    kind = raw.get("kind")
+def _check_cpu_kind(cpu: dict[str, Any], pkg: str) -> str:
+    kind = cpu.get("kind")
     if kind not in ("rocket", "boom"):
         raise ValueError(f"{pkg}: kind must be 'rocket' or 'boom', got {kind!r}")
-    has_rocket = "rocketCore" in raw
-    has_boom = "boomCore" in raw
-    if kind == "rocket":
-        if not has_rocket:
-            raise ValueError(f"{pkg}: kind=rocket requires rocketCore")
-        if has_boom:
-            raise ValueError(f"{pkg}: kind=rocket forbids boomCore")
-    else:
-        if not has_boom:
-            raise ValueError(f"{pkg}: kind=boom requires boomCore")
-        if has_rocket:
-            raise ValueError(f"{pkg}: kind=boom forbids rocketCore")
-        bd = raw.get("balldomain")
-        if isinstance(bd, dict) and bd.get("ballNum", 0):
-            raise ValueError(f"{pkg}: kind=boom forbids balldomain.ballNum > 0")
+    if not isinstance(cpu.get("config"), dict):
+        raise ValueError(f"{pkg}: cpu.config must reference a TOML file")
     return kind
 
 
@@ -191,8 +178,7 @@ def _fill_gp(msg: pb.GpDomainConfig, d: dict[str, Any], bbdir: Path) -> None:
     msg.lane_scale = d["laneScale"]
 
 
-def _fill_core_param(msg: pb.CoreParamConfig, d: dict[str, Any], bbdir: Path) -> None:
-    msg.source_path = _rel(bbdir, d["_file"])
+def _fill_cpu_params(msg: pb.CpuConfig, d: dict[str, Any]) -> None:
     msg.core_data_bytes = d["coreDataBytes"]
     msg.x_len = d["xLen"]
     msg.vaddr_bits = d["vaddrBits"]
@@ -207,22 +193,27 @@ def _fill_core(ci: pb.CoreInstance, raw: dict[str, Any], meta: dict[str, Any], b
     ci.pkg = meta["pkg"]
     ci.config_path = meta["config_path"]
     ci.balldomain_base_dir = meta["balldomain_base_dir"]
-    kind = _check_core_kind(raw, meta["pkg"])
-    ci.kind = kind
+    cpu = raw["cpu"]
+    kind = _check_cpu_kind(cpu, meta["pkg"])
+    ci.cpu.kind = kind
+    ci.cpu.source_path = _rel(bbdir, cpu["_file"])
     if "balldomain" in raw:
         _fill_ball(ci.balldomain, raw["balldomain"], bbdir)
     if "memdomain" in raw:
         _fill_mem(ci.mem, raw["memdomain"], bbdir)
     if kind == "rocket":
-        _fill_rocket(ci.rocket_core, raw["rocketCore"])
+        _fill_rocket(ci.cpu.rocket, cpu["config"])
     else:
-        _fill_boom(ci.boom_core, raw["boomCore"])
+        _fill_boom(ci.cpu.boom, cpu["config"])
+        bd = raw.get("balldomain")
+        if isinstance(bd, dict) and bd.get("ballNum", 0):
+            raise ValueError(f"{meta['pkg']}: kind=boom forbids balldomain.ballNum > 0")
     if "frontend" in raw:
         _fill_frontend(ci.frontend, raw["frontend"], bbdir)
     if "gpdomain" in raw:
         _fill_gp(ci.gp_domain, raw["gpdomain"], bbdir)
-    if "core" in raw:
-        _fill_core_param(ci.core, raw["core"], bbdir)
+    if ci.balldomain.ball_num > 0:
+        _fill_cpu_params(ci.cpu, cpu)
 
 
 def _fill_tile(tp: pb.TilePlacement, meta: dict[str, Any], proto: dict[str, Any]) -> None:

@@ -23,6 +23,16 @@ async def handler(request: ApiRequest, ctx: FlowContext) -> ApiResponse:
                 "message": "image and bitstream parameters are required",
             },
         )
+    if body.get("diff", False) and not body.get("golden-elf"):
+        return ApiResponse(
+            status=400,
+            body={
+                "success": False,
+                "failure": True,
+                "returncode": 400,
+                "message": "--diff requires --golden-elf <path>",
+            },
+        )
 
     await ctx.enqueue({
         "topic": "bebop.p2e.runworkload",
