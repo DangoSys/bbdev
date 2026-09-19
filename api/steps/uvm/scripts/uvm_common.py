@@ -35,14 +35,39 @@ def load_chip(bbdir: str, chip: str):
     return msg
 
 
-def ball_domain(chip):
-    domain = chip.cores[0].balldomain
-    for core in chip.cores[1:]:
-        if (
-            core.balldomain.mappings != domain.mappings
-            or core.balldomain.isa != domain.isa
-        ):
-            raise ValueError("chip.pb cores have different balldomains")
+def load_chip_uvm(bbdir: str, chip: str) -> dict[str, list[str]]:
+    path = Path(bbdir) / "examples" / "chips" / chip / "configs" / "chip.toml"
+    config = tomllib.loads(path.read_text())["uvm"]
+    if set(config) != {"balls", "ips"}:
+        raise ValueError(f"{path}: [uvm] must define exactly balls and ips")
+    if not config["balls"] and not config["ips"]:
+        raise ValueError(f"{path}: [uvm] has no targets")
+    return config
+
+
+def ball_domain(chip, ball: str | None = None):
+    if ball is None:
+        domains = [core.balldomain for core in chip.cores]
+        domain = domains[0]
+        for other in domains[1:]:
+            if other.mappings != domain.mappings or other.isa != domain.isa:
+                raise ValueError("chip.pb cores have different balldomains")
+        return domain
+
+    matches = []
+    for core in chip.cores:
+        mappings = [m for m in core.balldomain.mappings if m.ball_dir == ball]
+        if mappings:
+            mapping = mappings[0]
+            isa = [e for e in core.balldomain.isa if e.bid == mapping.ball_id]
+            matches.append((core.balldomain, mapping, isa))
+    if not matches:
+        raise ValueError(f"ball {ball!r} not in chip.pb")
+
+    domain, mapping, isa = matches[0]
+    for _, other_mapping, other_isa in matches[1:]:
+        if other_mapping != mapping or other_isa != isa:
+            raise ValueError(f"ball {ball!r} has different definitions across cores")
     return domain
 
 
@@ -146,6 +171,20 @@ def _ip_filelist(
         .replace("@RTL@", str(rtl))
     )
     return dst
+
+
+def check_uvm_result(result, target: str) -> None:
+    if result.returncode != 0:
+        raise RuntimeError(f"UVM failed for {target}")
+    counts = dict(
+        re.findall(r"UVM_(ERROR|FATAL)\s*:\s*(\d+)", result.stdout + result.stderr)
+    )
+    if set(counts) != {"ERROR", "FATAL"}:
+        raise RuntimeError(f"UVM report summary missing for {target}")
+    if counts != {"ERROR": "0", "FATAL": "0"}:
+        raise RuntimeError(
+            f"UVM failed for {target}: errors={counts['ERROR']} fatals={counts['FATAL']}"
+        )
 
 
 def build_ip(bbdir: str, chip: str, name: str, ctx) -> dict:
@@ -257,8 +296,7 @@ def run_ip(bbdir: str, chip: str, name: str, ctx, cov_root: str) -> dict:
             stdout_prefix="uvm run",
             stderr_prefix="uvm run",
         )
-        if result.returncode != 0:
-            raise RuntimeError(f"UVM failed for IP {name} target={target['name']}")
+        check_uvm_result(result, f"IP {name} target={target['name']}")
 
         cov_dir.mkdir(parents=True, exist_ok=True)
         urg = (
@@ -384,8 +422,7 @@ def run_ball(
         stdout_prefix="uvm run",
         stderr_prefix="uvm run",
     )
-    if r.returncode != 0:
-        raise RuntimeError(f"uvm run failed for {ball} test={test}")
+    check_uvm_result(r, f"{ball} test={test}")
     Path(cov_dir).mkdir(parents=True, exist_ok=True)
     urg = (
         f"nix develop {shlex.quote(str(Path(bbdir) / 'verify'))} --command "
@@ -424,7 +461,7 @@ def dashboard_summary(cov_dir: str) -> dict[str, str]:
 
 def run_chip(bbdir: str, chip: str, ball: str | None, ctx, do_run: bool) -> dict:
     msg = load_chip(bbdir, chip)
-    domain = ball_domain(msg)
+    domain = ball_domain(msg, ball)
     mill_cfg = msg.mill.verilator_config
     maps = selected_mappings(domain, ball)
     ran = []
@@ -471,15 +508,36 @@ def run_chip(bbdir: str, chip: str, ball: str | None, ctx, do_run: bool) -> dict
 def run_uvm(
     bbdir: str, chip: str, ball: str | None, ip: str | None, ctx, do_run: bool
 ) -> dict:
-    if ip is None:
+    if ball is not None:
         return run_chip(bbdir, chip, ball, ctx, do_run)
-    if do_run:
-        stamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
-        run_root = log_dir(bbdir, chip, "verilog", stamp, "uvm", ip)
-        return run_ip(bbdir, chip, ip, ctx, run_root)
-    config = build_ip(bbdir, chip, ip, ctx)
-    return {
-        "chip": chip,
-        "ip": ip,
-        "targets": [target["name"] for target in config["targets"]],
-    }
+    if ip is not None:
+        if do_run:
+            stamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
+            run_root = log_dir(bbdir, chip, "verilog", stamp, "uvm", ip)
+            return run_ip(bbdir, chip, ip, ctx, run_root)
+        config = build_ip(bbdir, chip, ip, ctx)
+        return {
+            "chip": chip,
+            "ip": ip,
+            "targets": [target["name"] for target in config["targets"]],
+        }
+
+    targets = load_chip_uvm(bbdir, chip)
+    results = [
+        run_chip(bbdir, chip, target, ctx, do_run) for target in targets["balls"]
+    ]
+    for target in targets["ips"]:
+        if do_run:
+            stamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
+            run_root = log_dir(bbdir, chip, "verilog", stamp, "uvm", target)
+            results.append(run_ip(bbdir, chip, target, ctx, run_root))
+        else:
+            config = build_ip(bbdir, chip, target, ctx)
+            results.append(
+                {
+                    "chip": chip,
+                    "ip": target,
+                    "targets": [item["name"] for item in config["targets"]],
+                }
+            )
+    return {"chip": chip, "results": results}
