@@ -58,7 +58,23 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         or input_data.get("output-dir")
         or f"{bebop_dir}/build/{chip}-{timestamp}"
     )
-    os.makedirs(build_dir, exist_ok=True)
+    build_path = Path(build_dir)
+    if build_path.exists() and (
+        not build_path.is_dir() or any(build_path.iterdir())
+    ):
+        ctx.logger.error(f"P2E build directory is not empty: {build_dir}")
+        await check_result(
+            ctx,
+            1,
+            continue_run=False,
+            extra_fields={
+                "error": "build_dir_not_empty",
+                "build_dir": build_dir,
+            },
+            trace_id=origin_tid,
+        )
+        return
+    build_path.mkdir(parents=True, exist_ok=True)
 
     diff = bool(input_data.get("diff", False))
     manifest = Path(bebop_dir) / "Cargo.toml"

@@ -104,9 +104,7 @@ def _fill_ball(msg: pb.BallDomain, d: dict[str, Any], bbdir: Path) -> None:
         e.bid = item["bid"]
 
 
-def _fill_rocket(msg: pb.RocketCoreConfig, d: dict[str, Any]) -> None:
-    msg.x_len = d["xLen"]
-    msg.pg_levels = d["pgLevels"]
+def _fill_rocket(msg: pb.RocketCpuConfig, d: dict[str, Any]) -> None:
     msg.use_vm = d["useVM"]
     msg.use_zba = d["useZba"]
     msg.use_zbb = d["useZbb"]
@@ -134,7 +132,7 @@ def _fill_rocket(msg: pb.RocketCoreConfig, d: dict[str, Any]) -> None:
     msg.btb.n_ras = btb["nRAS"]
 
 
-def _fill_boom(msg: pb.BoomCoreConfig, d: dict[str, Any]) -> None:
+def _fill_boom(msg: pb.BoomCpuConfig, d: dict[str, Any]) -> None:
     msg.fetch_width = d["fetchWidth"]
     msg.decode_width = d["decodeWidth"]
     msg.num_rob_entries = d["numRobEntries"]
@@ -178,12 +176,13 @@ def _fill_gp(msg: pb.GpDomainConfig, d: dict[str, Any], bbdir: Path) -> None:
     msg.lane_scale = d["laneScale"]
 
 
-def _fill_cpu_params(msg: pb.CpuConfig, d: dict[str, Any]) -> None:
+def _fill_tile_params(msg: pb.TileParamConfig, d: dict[str, Any]) -> None:
     msg.core_data_bytes = d["coreDataBytes"]
     msg.x_len = d["xLen"]
     msg.vaddr_bits = d["vaddrBits"]
     msg.paddr_bits = d["paddrBits"]
     msg.pg_idx_bits = d["pgIdxBits"]
+    msg.pg_levels = d["pgLevels"]
     msg.n_pmps = d["nPMPs"]
 
 
@@ -212,8 +211,6 @@ def _fill_core(ci: pb.CoreInstance, raw: dict[str, Any], meta: dict[str, Any], b
         _fill_frontend(ci.frontend, raw["frontend"], bbdir)
     if "gpdomain" in raw:
         _fill_gp(ci.gp_domain, raw["gpdomain"], bbdir)
-    if ci.balldomain.ball_num > 0:
-        _fill_cpu_params(ci.cpu, cpu)
 
 
 def _fill_tile(tp: pb.TilePlacement, meta: dict[str, Any], proto: dict[str, Any]) -> None:
@@ -221,6 +218,7 @@ def _fill_tile(tp: pb.TilePlacement, meta: dict[str, Any], proto: dict[str, Any]
     tp.virtual_bank_count = meta["virtual_bank_count"]
     tp.core_indices.extend(meta["core_indices"])
     tp.mem_ball_channel_num = meta["mem_ball_channel_num"]
+    _fill_tile_params(tp.param, proto)
     dc = proto["privateDCache"]
     tp.private_dcache.enable = dc["enable"]
     tp.private_dcache.ways = dc["ways"]

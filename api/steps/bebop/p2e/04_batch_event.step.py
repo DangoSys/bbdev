@@ -10,7 +10,6 @@ import os
 import re
 import shlex
 import sys
-import tomllib
 from pathlib import Path
 
 from motia import FlowContext, queue
@@ -23,8 +22,7 @@ if bebop_path not in sys.path:
     sys.path.insert(0, bebop_path)
 
 from utils.event_common import require_chip
-from utils.path import bebop_cargo_env, get_buckyball_path, workload_tests_root, workloads_output_root
-from utils.search_workload import search_workload
+from utils.path import bebop_cargo_env, get_buckyball_path, workloads_output_root
 from utils.stream_run import stream_run_logger_async
 from utils.event_common import check_result, get_origin_trace_id
 from regression import regression_workload_toml
@@ -102,34 +100,6 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
 
     ctx.logger.info(f"Running {test_type} with workload config: {workload_toml} diff={diff}")
     ctx.logger.info(f"P2E case dir (from bitstream): {build_dir}")
-
-    if test_type == "elf-tests":
-        workload_names = tomllib.loads(Path(workload_toml).read_text())["workloads"]["tests"]
-        converter = os.path.join(bbdir, "bbdev", "api", "steps", "workload", "scripts", "elf2hex.py")
-        search_root = workload_tests_root(bbdir, chip)
-        for image_name in workload_names:
-            if not image_name.endswith(".hex"):
-                raise ValueError(f"P2E ELF workload must end in .hex: {image_name}")
-            elf_name = image_name.removesuffix(".hex")
-            elf_path = search_workload(search_root, elf_name)
-            if elf_path is None:
-                raise FileNotFoundError(f"P2E workload ELF not found: {elf_name}")
-            convert_result = await stream_run_logger_async(
-                cmd=shlex.join(["python3", converter, elf_path]),
-                logger=ctx.logger,
-                cwd=os.path.dirname(elf_path),
-                stdout_prefix=f"p2e image {elf_name}",
-                stderr_prefix=f"p2e image {elf_name}",
-            )
-            if convert_result.returncode != 0:
-                await check_result(
-                    ctx,
-                    convert_result.returncode,
-                    continue_run=False,
-                    extra_fields={"task": "tohex", "elf": elf_path},
-                    trace_id=origin_tid,
-                )
-                return
 
     manifest = Path(bebop_dir) / "Cargo.toml"
     features = ["p2e"]
