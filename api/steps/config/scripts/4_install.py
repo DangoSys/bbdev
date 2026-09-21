@@ -143,6 +143,18 @@ build = "../../../../../bebop/build.rs"
 name = "bebop"
 path = "../../../../../bebop/src/main.rs"
 
+[[test]]
+name = "test_verilator"
+path = "../../../../../bebop/tests/test_verilator.rs"
+harness = false
+required-features = ["verilator"]
+
+[[test]]
+name = "test_p2e"
+path = "../../../../../bebop/tests/test_p2e.rs"
+harness = false
+required-features = ["p2e"]
+
 [features]
 default = []
 verilator = ["dep:bebop-verilator"]
@@ -166,12 +178,17 @@ log = "0.4"
 env_logger = "0.11"
 nix = { version = "0.29", features = ["fs", "mman", "signal", "process"] }
 toml = "0.8"
-ctrlc = "3"
 camino = "1.1"
 snafu = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 duct = "0.13"
+
+[dev-dependencies]
+libtest-mimic = "0.8"
+assert_cmd = "2"
+walkdir = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 """,
         encoding="utf-8",
     )

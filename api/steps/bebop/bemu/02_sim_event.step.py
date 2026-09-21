@@ -69,7 +69,12 @@ def resolve_bemu_binary(bbdir: str, chip: str, binary_name: str) -> str | None:
     if Path(binary_name).name != binary_name:
         return None
 
-    return search_workload(workloads_output_root(bbdir), binary_name)
+    workload = search_workload(workloads_output_root(bbdir), binary_name)
+    if workload is not None:
+        return workload
+
+    kernel = Path(bbdir) / "bb-tests" / "output" / "kernel" / chip / binary_name
+    return str(kernel) if kernel.is_file() else None
 
 
 def is_native_host_elf(path: str) -> bool:

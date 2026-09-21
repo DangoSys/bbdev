@@ -120,16 +120,8 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     manifest = f"{bebop_dir}/Cargo.toml"
     features = "verilator"
     if diff:
+        manifest = f"{bbdir}/examples/chips/{chip}/generated/bebop/Cargo.toml"
         features = "verilator,bemu,difftest"
-        preload = os.pathsep.join(
-            path
-            for path in (
-                f"{bbdir}/result/lib/libdramsim3.so",
-                os.environ.get("LD_PRELOAD", ""),
-            )
-            if path
-        )
-        env["LD_PRELOAD"] = preload
 
     if input_data.get("clean-before", input_data.get("clean_before", False)):
         artifact_dir = os.path.join(env["CARGO_TARGET_DIR"], "test-artifacts")

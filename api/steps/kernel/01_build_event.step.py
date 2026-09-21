@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 
 from motia import FlowContext, queue
@@ -231,11 +232,26 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     payload_name = fw_payload_name(hart_params, cmake_model_name if model else "", chip)
     fw_payload_bin = os.path.join(output_dir, f"{payload_name}.bin")
     fw_payload_hex = os.path.join(output_dir, f"{payload_name}.hex")
+    fw_payload_elf = os.path.join(output_dir, f"{payload_name}.elf")
+    built_payload_elf = os.path.join(
+        kernel_build,
+        "opensbi",
+        "platform",
+        "buckyball",
+        "firmware",
+        "fw_payload.elf",
+    )
 
     if not os.path.exists(fw_payload_bin):
         ctx.logger.error(f"{payload_name}.bin not found")
         await check_result(ctx, 1, continue_run=False, trace_id=origin_tid)
         return
+    if not os.path.isfile(built_payload_elf):
+        ctx.logger.error(f"fw_payload.elf not found: {built_payload_elf}")
+        await check_result(ctx, 1, continue_run=False, trace_id=origin_tid)
+        return
+
+    shutil.copy2(built_payload_elf, fw_payload_elf)
 
     ctx.logger.info(f"Converting {fw_payload_bin} to Verilog hex format for P2E...")
     success = bin_to_hex(fw_payload_bin, fw_payload_hex, base_address=0x80000000)

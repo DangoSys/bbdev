@@ -117,26 +117,6 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         return
     wave = bool(input_data.get("wave", False))
     diff = bool(input_data.get("diff", False))
-    golden_elf = input_data.get("golden-elf", "")
-    golden_pk = bool(input_data.get("golden-pk", False))
-    if diff and not golden_elf:
-        ctx.logger.error("--diff requires --golden-elf <path>")
-        await check_result(
-            ctx, 1, continue_run=False,
-            extra_fields={"error": "missing_golden_elf"},
-            trace_id=origin_tid,
-        )
-        return
-    if diff and not os.path.isfile(golden_elf):
-        ctx.logger.error(f"BEMU golden ELF not found: {golden_elf}")
-        await check_result(
-            ctx, 1, continue_run=False,
-            extra_fields={"error": "golden_elf_not_found", "golden_elf": golden_elf},
-            trace_id=origin_tid,
-        )
-        return
-    if diff:
-        golden_elf = os.path.abspath(golden_elf)
     if "wave_start" in input_data:
         ctx.logger.error("invalid parameter: --wave_start (use --wave-start)")
         await check_result(
@@ -175,6 +155,17 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         await check_result(
             ctx, 1, continue_run=False,
             extra_fields={"error": "image_not_found", "image": image_name},
+            trace_id=origin_tid,
+        )
+        return
+
+    image_base = os.path.splitext(image_path)[0]
+    elf_path = f"{image_base}.elf" if os.path.isfile(f"{image_base}.elf") else image_base
+    if diff and not os.path.isfile(elf_path):
+        ctx.logger.error(f"workload ELF for P2E DiffTest not found: {elf_path}")
+        await check_result(
+            ctx, 1, continue_run=False,
+            extra_fields={"error": "workload_elf_not_found", "elf": elf_path},
             trace_id=origin_tid,
         )
         return
@@ -282,9 +273,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     if wave_start is not None:
         run_cmd += f" --wave-start=\"{wave_start}\""
     if diff:
-        run_cmd += f" --diff --golden-elf={shlex.quote(golden_elf)}"
-    if golden_pk:
-        run_cmd += " --golden-pk"
+        run_cmd += f" --diff --image-elf={shlex.quote(elf_path)}"
     for trace_name in ("itrace", "mtrace", "pmctrace", "ctrace", "banktrace"):
         if input_data.get(trace_name, False):
             run_cmd += f" --{trace_name}"
@@ -318,7 +307,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
             "fpga_location": fpga_location,
             "bdb_trace": os.path.join(run_log, "bdb.ndjson"),
             "uart_log": os.path.join(run_log, "uart.log"),
-            "bank_diff": os.path.join(run_log, "bank_diff.ndjson") if diff else None,
+            "bank_diff": os.path.join(run_log, "diff.ndjson") if diff else None,
             "diff": diff,
             "timestamp": timestamp,
         },
