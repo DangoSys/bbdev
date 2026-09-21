@@ -158,7 +158,7 @@ required-features = ["p2e"]
 [features]
 default = []
 verilator = ["dep:bebop-verilator"]
-p2e = ["dep:bebop-p2e"]
+p2e = ["dep:bebop-p2e", "bebop-bemu?/p2e"]
 bemu = ["dep:bebop-bemu"]
 difftest = ["bebop-bemu/difftest"]
 

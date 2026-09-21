@@ -2,9 +2,9 @@
 bebop p2e batch event handler
 
 Runs bebop p2e nextest batch regression (aligned with runworkload):
-  1. Resolve VSRC from bitstream case and rebuild VVAC runtime into case dir
-  2. Build bebop with p2e feature and OUT_PATH=<case_dir>
-  3. Run cargo nextest with the same OUT_PATH (serial, single FPGA)
+  1. Resolve the runtime from the bitstream case
+  2. Build the test harness against that runtime
+  3. Run cargo nextest serially on one FPGA
 """
 import os
 import re
@@ -23,7 +23,7 @@ if bebop_path not in sys.path:
     sys.path.insert(0, bebop_path)
 
 from utils.event_common import require_chip
-from utils.path import bebop_cargo_env, get_buckyball_path, rtl_dir, workload_tests_root, workloads_output_root
+from utils.path import bebop_cargo_env, get_buckyball_path, workload_tests_root, workloads_output_root
 from utils.search_workload import search_workload
 from utils.stream_run import stream_run_logger_async
 from utils.event_common import check_result, get_origin_trace_id
@@ -65,7 +65,6 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         return
 
     bitstream = os.path.abspath(bitstream)
-    # Same as runworkload: case home is parent of fpgaCompDir/
     build_dir = os.path.dirname(os.path.dirname(bitstream))
     if not os.path.isdir(build_dir):
         ctx.logger.error(f"P2E build case not found for bitstream: {build_dir}")
@@ -132,68 +131,29 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
                 )
                 return
 
-    vsrc_dir = rtl_dir(bbdir, chip, "p2e", input_data.get("vsrc_dir"))
-    # Rebuild VVAC host runtime in the bitstream case (same as runworkload).
     manifest = Path(bebop_dir) / "Cargo.toml"
     features = ["p2e"]
     runtime_env = {**os.environ.copy(), **cargo_env}
     if diff:
         manifest = Path(bbdir) / "examples" / "chips" / chip / "generated" / "bebop" / "Cargo.toml"
         features.extend(["bemu", "difftest"])
-        hpec_home = "/home/x-epic/hpe-24.12.01.s008"
-        runtime_env.update({
-            "BEBOP_BEMU_P2E_ABI": "1",
-            "BEBOP_BEMU_CC": os.path.join(hpec_home, "tools", "gcc-8.3.0", "gcc-8.3.0", "bin", "gcc"),
-            "BEBOP_BEMU_CXX": os.path.join(hpec_home, "tools", "gcc-8.3.0", "gcc-8.3.0", "bin", "g++"),
-            "BEBOP_BEMU_DTC": os.path.join(bbdir, "result", "bin", "dtc"),
-            "CARGO_TARGET_DIR": os.path.join(bebop_dir, "target", f"{chip}-p2e-diff"),
-            "BEBOP_BEMU_COMPILER_LIBRARY_PATH": ":".join([
-                os.path.join(hpec_home, "tools", "gcc-8.3.0", "gmp-6.2.1", "lib"),
-                os.path.join(hpec_home, "tools", "gcc-8.3.0", "mpfr-4.1.0", "lib"),
-                os.path.join(hpec_home, "tools", "gcc-8.3.0", "mpc-1.2.1", "lib"),
-            ]),
-        })
+        runtime_env["CARGO_TARGET_DIR"] = os.path.join(bebop_dir, "target", f"{chip}-p2e-diff")
     feature_arg = ",".join(features)
-    runtime_cmd = shlex.join([
-        "env",
-        "BEBOP_P2E_RUNTIME_ONLY=1",
-        "BEBOP_P2E_REBUILD_RUNTIME=1",
-        f"VSRC_PATH={vsrc_dir}",
-        f"OUT_PATH={build_dir}",
-        "cargo", "run", "--release",
-        "--manifest-path", str(manifest),
-        "--bin", "bebop",
-        "--features", feature_arg,
-        "--", "build", "p2e",
-        "--rtl-dir", vsrc_dir,
-        "--out-dir", build_dir,
-        *( ["--diff"] if diff else [] ),
-    ])
-    ctx.logger.info("Preparing bebop p2e runtime for the selected bitstream ...")
-    runtime_result = await stream_run_logger_async(
-        cmd=runtime_cmd,
-        logger=ctx.logger,
-        cwd=str(manifest.parent),
-        stdout_prefix="bebop p2e runtime",
-        stderr_prefix="bebop p2e runtime",
-        env=runtime_env,
-    )
     rtcfg_path = os.path.join(build_dir, "vvacDir", "runtimeDir", "rtcfg")
     libvctb_path = os.path.join(build_dir, "vvacDir", "runtimeDir", "lib", "lib_arm", "libvCtb.so")
-    runtime_artifacts = [rtcfg_path, libvctb_path]
+    runtime_artifacts = [rtcfg_path, libvctb_path, os.path.join(build_dir, "bebop-p2e")]
     if diff:
         runtime_artifacts.append(os.path.join(build_dir, "libriscv.so"))
-    if runtime_result.returncode != 0 or not all(os.path.isfile(path) for path in runtime_artifacts):
+    if not all(os.path.isfile(path) for path in runtime_artifacts):
         missing = [path for path in runtime_artifacts if not os.path.isfile(path)]
         if missing:
             ctx.logger.error(f"P2E runtime artifacts missing: {missing}")
         await check_result(
             ctx,
-            runtime_result.returncode or 1,
+            1,
             continue_run=False,
             extra_fields={
                 "task": "runtime",
-                "vsrc_dir": vsrc_dir,
                 "build_dir": build_dir,
                 "missing": missing,
             },
@@ -201,7 +161,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         )
         return
 
-    # cargo global --config so OUT_PATH reaches bebop-p2e build.rs (same as runworkload).
+    # OUT_PATH makes the test harness link against this bitstream case's runtime.
     cargo_out = f"--config=\"env.OUT_PATH='{build_dir}'\""
 
     # ── Build bebop p2e (tests), linked against case libvCtb ───────────────

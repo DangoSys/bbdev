@@ -7,8 +7,10 @@ Builds the P2E VVAC runtime case via bebop CLI:
   3. Validate generated bitstream and runtime artifacts
 """
 import os
+import shlex
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from motia import FlowContext, queue
 
@@ -58,32 +60,50 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     )
     os.makedirs(build_dir, exist_ok=True)
 
-    build_cmd = (
-        f"nix develop --ignore-env --keep-env-var HOME --keep-env-var ALL_PROXY "
-        f"--keep-env-var CARGO_TARGET_DIR -c "
-        f"cargo run --release --features p2e -- build p2e "
-        f"--rtl-dir=\"{vsrc_dir}\" "
-        f"--out-dir=\"{build_dir}\""
-    )
+    diff = bool(input_data.get("diff", False))
+    manifest = Path(bebop_dir) / "Cargo.toml"
+    features = ["p2e"]
+    build_env = {**os.environ, **bebop_cargo_env(bbdir, chip)}
+    if diff:
+        manifest = Path(bbdir) / "examples" / "chips" / chip / "generated" / "bebop" / "Cargo.toml"
+        features.extend(["bemu", "difftest"])
+        build_env["CARGO_TARGET_DIR"] = os.path.join(bebop_dir, "target", f"{chip}-p2e-diff")
+    build_cmd = shlex.join([
+        "nix", "develop", "--ignore-env",
+        "--keep-env-var", "HOME",
+        "--keep-env-var", "ALL_PROXY",
+        "--keep-env-var", "CARGO_TARGET_DIR",
+        "-c", "cargo", "run", "--release",
+        "--manifest-path", str(manifest),
+        "--bin", "bebop",
+        "--features", ",".join(features),
+        "--", "build", "p2e",
+        "--rtl-dir", vsrc_dir,
+        "--out-dir", build_dir,
+        *(["--diff"] if diff else []),
+    ])
     ctx.logger.info("Building bebop p2e runtime case ...")
     build_result = await stream_run_logger_async(
         cmd=build_cmd,
         logger=ctx.logger,
-        cwd=bebop_dir,
+        cwd=str(manifest.parent),
         stdout_prefix="bebop p2e build",
         stderr_prefix="bebop p2e build",
-        env={**os.environ, **bebop_cargo_env(bbdir, chip)},
+        env=build_env,
     )
 
     rtcfg_path = os.path.join(build_dir, "vvacDir", "runtimeDir", "rtcfg")
     libvctb_path = os.path.join(build_dir, "vvacDir", "runtimeDir", "lib", "lib_arm", "libvCtb.so")
     bitstream_path = os.path.join(build_dir, "fpgaCompDir", "bitstream.bit")
+    runtime_path = os.path.join(build_dir, "bebop-p2e")
     if build_result.returncode == 0:
         missing = [
             path
-            for path in (rtcfg_path, libvctb_path, bitstream_path)
+            for path in (rtcfg_path, libvctb_path, bitstream_path, runtime_path)
             if not os.path.exists(path)
         ]
+        if diff and not os.path.isfile(os.path.join(build_dir, "libriscv.so")):
+            missing.append(os.path.join(build_dir, "libriscv.so"))
         if missing:
             ctx.logger.error(f"P2E build artifacts missing: {missing}")
             await check_result(
@@ -109,6 +129,8 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         "rtcfg": rtcfg_path,
         "libvCtb": libvctb_path,
         "bitstream": bitstream_path,
+        "runtime": runtime_path,
+        "diff": diff,
         "timestamp": timestamp,
     }
     if input_data.get("from_regression_buildbitstream") and build_result.returncode == 0:

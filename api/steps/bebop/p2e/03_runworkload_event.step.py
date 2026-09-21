@@ -12,7 +12,6 @@ import re
 import shlex
 import sys
 from datetime import datetime
-from pathlib import Path
 
 from motia import FlowContext, queue
 
@@ -24,7 +23,7 @@ if scripts_path not in sys.path:
     sys.path.insert(0, scripts_path)
 
 from utils.event_common import require_chip
-from utils.path import bebop_cargo_env, get_buckyball_path, log_dir, rtl_dir
+from utils.path import bebop_cargo_env, get_buckyball_path, log_dir
 from utils.stream_run import stream_run_logger_async
 from utils.event_common import check_result, get_origin_trace_id
 from resolve_image import resolve_image
@@ -51,41 +50,6 @@ def case_uses_multi_fpga(build_dir: str) -> bool:
     fpga_comp_dir = os.path.join(build_dir, "fpgaCompDir")
     part_dirs = glob.glob(os.path.join(fpga_comp_dir, "part_b*_f*"))
     return len([path for path in part_dirs if os.path.isdir(path)]) > 1
-
-
-def runtime_build_command(bbdir: str, chip: str, diff: bool, vsrc_dir: str, build_dir: str) -> tuple[str, str]:
-    manifest = Path(bbdir) / "bebop" / "Cargo.toml"
-    features = ["p2e"]
-    if diff:
-        manifest = Path(bbdir) / "examples" / "chips" / chip / "generated" / "bebop" / "Cargo.toml"
-        features.extend(["bemu", "difftest"])
-    command = shlex.join(
-        [
-            "env",
-            "BEBOP_P2E_RUNTIME_ONLY=1",
-            "BEBOP_P2E_REBUILD_RUNTIME=1",
-            f"VSRC_PATH={vsrc_dir}",
-            f"OUT_PATH={build_dir}",
-            "cargo",
-            "run",
-            "--release",
-            "--manifest-path",
-            str(manifest),
-            "--bin",
-            "bebop",
-            "--features",
-            ",".join(features),
-            "--",
-            "build",
-            "p2e",
-            "--rtl-dir",
-            vsrc_dir,
-            "--out-dir",
-            build_dir,
-            *(["--diff"] if diff else []),
-        ]
-    )
-    return command, str(manifest.parent)
 
 
 async def handler(input_data: dict, ctx: FlowContext) -> None:
@@ -194,60 +158,27 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         multi_fpga = True
         ctx.logger.info(f"Detected multi-FPGA P2E case: {build_dir}")
 
-    vsrc_dir = rtl_dir(bbdir, chip, "p2e", input_data.get("vsrc_dir"))
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
     run_log = log_dir(bbdir, chip, "p2e", timestamp, "p2e", image_name, input_data.get("vsrc_dir"))
     os.makedirs(run_log, exist_ok=True)
 
-    # Rebuild the VVAC host runtime in the bitstream case.  The bitstream is
-    # deliberately left in place, so runtime/DPIC changes never trigger FPGA synthesis.
-    runtime_cmd, runtime_cwd = runtime_build_command(bbdir, chip, diff, vsrc_dir, build_dir)
-    runtime_env = {**os.environ.copy(), **bebop_cargo_env(bbdir, chip)}
-    if diff:
-        hpec_home = "/home/x-epic/hpe-24.12.01.s008"
-        runtime_env["BEBOP_BEMU_P2E_ABI"] = "1"
-        runtime_env["BEBOP_BEMU_CC"] = os.path.join(
-            hpec_home, "tools", "gcc-8.3.0", "gcc-8.3.0", "bin", "gcc"
-        )
-        runtime_env["BEBOP_BEMU_CXX"] = os.path.join(
-            hpec_home, "tools", "gcc-8.3.0", "gcc-8.3.0", "bin", "g++"
-        )
-        runtime_env["BEBOP_BEMU_DTC"] = os.path.join(bbdir, "result", "bin", "dtc")
-        runtime_env["CARGO_TARGET_DIR"] = os.path.join(bebop_dir, "target", f"{chip}-p2e-diff")
-        compiler_libs = [
-            os.path.join(hpec_home, "tools", "gcc-8.3.0", "gmp-6.2.1", "lib"),
-            os.path.join(hpec_home, "tools", "gcc-8.3.0", "mpfr-4.1.0", "lib"),
-            os.path.join(hpec_home, "tools", "gcc-8.3.0", "mpc-1.2.1", "lib"),
-        ]
-        runtime_env["BEBOP_BEMU_COMPILER_LIBRARY_PATH"] = ":".join(compiler_libs)
-    ctx.logger.info("Preparing bebop p2e runtime for the selected bitstream ...")
-    runtime_result = await stream_run_logger_async(
-        cmd=runtime_cmd,
-        logger=ctx.logger,
-        cwd=runtime_cwd,
-        stdout_prefix="bebop p2e runtime",
-        stderr_prefix="bebop p2e runtime",
-        env=runtime_env,
-    )
     runtime_lib_dir = os.path.join(build_dir, "vvacDir", "runtimeDir", "lib", "lib_arm")
     rtcfg_path = os.path.join(build_dir, "vvacDir", "runtimeDir", "rtcfg")
     libvctb_path = os.path.join(runtime_lib_dir, "libvCtb.so")
-    libstdcxx_path = os.path.join(runtime_lib_dir, "libstdc++.so.6")
     bebop_p2e_path = os.path.join(build_dir, "bebop-p2e")
-    runtime_artifacts = [rtcfg_path, libvctb_path, libstdcxx_path, bebop_p2e_path]
+    runtime_artifacts = [rtcfg_path, libvctb_path, bebop_p2e_path]
     if diff:
         runtime_artifacts.append(os.path.join(build_dir, "libriscv.so"))
-    if runtime_result.returncode != 0 or not all(os.path.isfile(path) for path in runtime_artifacts):
+    if not all(os.path.isfile(path) for path in runtime_artifacts):
         missing = [path for path in runtime_artifacts if not os.path.isfile(path)]
         if missing:
             ctx.logger.error(f"P2E runtime artifacts missing: {missing}")
         await check_result(
             ctx,
-            runtime_result.returncode or 1,
+            1,
             continue_run=False,
             extra_fields={
                 "task": "runtime",
-                "vsrc_dir": vsrc_dir,
                 "build_dir": build_dir,
                 "missing": missing,
             },
@@ -255,10 +186,6 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         )
         return
 
-    # Run the case-local executable produced above.  It must load the VVAC
-    # runtime's libstdc++ (6.0.25), not Cargo/Nix's newer libstdc++; mixing the
-    # two ABIs crashes inside ICtbMgr::init().  Apply LD_LIBRARY_PATH only to
-    # the runtime process so Cargo itself keeps its normal library environment.
     run_cmd = (
         f"\"{bebop_p2e_path}\" run p2e "
         f"--image=\"{image_path}\" "
@@ -279,12 +206,6 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
             run_cmd += f" --{trace_name}"
     ctx.logger.info(f"Running bebop p2e runworkload: {run_cmd}")
     run_env = {**os.environ.copy(), **bebop_cargo_env(bbdir, chip)}
-    inherited_library_path = run_env.get("LD_LIBRARY_PATH")
-    run_env["LD_LIBRARY_PATH"] = (
-        f"{runtime_lib_dir}:{inherited_library_path}"
-        if inherited_library_path
-        else runtime_lib_dir
-    )
     run_result = await stream_run_logger_async(
         cmd=run_cmd,
         logger=ctx.logger,

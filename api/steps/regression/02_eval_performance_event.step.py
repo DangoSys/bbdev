@@ -26,7 +26,7 @@ utils_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")
 if utils_path not in sys.path:
     sys.path.insert(0, utils_path)
 
-from utils.path import get_buckyball_path, rtl_dir, log_dir
+from utils.path import bebop_cargo_env, get_buckyball_path, log_dir
 from utils.stream_run import stream_run_logger_async
 from utils.event_common import check_result, get_origin_trace_id
 
@@ -131,27 +131,33 @@ def _p2e_run_cmds(bbdir, bitstream, image_name, chip, input_data):
     multi_fpga = bool(input_data.get("multi-fpga", False))
     if not multi_fpga and _p2e.case_uses_multi_fpga(build_dir):
         multi_fpga = True
-    vsrc_dir = rtl_dir(bbdir, chip, "p2e", input_data.get("vsrc_dir"))
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
     run_log = log_dir(bbdir, chip, "p2e", timestamp, "p2e", image_name, input_data.get("vsrc_dir"))
     os.makedirs(run_log, exist_ok=True)
-    runtime_cmd = (
-        f"env BEBOP_P2E_RUNTIME_ONLY=1 BEBOP_P2E_REBUILD_RUNTIME=1 "
-        f'cargo run --release --features p2e -- build p2e '
-        f'--rtl-dir="{vsrc_dir}" '
-        f'--out-dir="{build_dir}"'
+    runtime_lib_dir = os.path.join(
+        build_dir, "vvacDir", "runtimeDir", "lib", "lib_arm"
     )
-    run_cmd = (
-        f"cargo run --release --features p2e "
-        f"--config=\"env.OUT_PATH='{build_dir}'\" "
-        f"-- run p2e "
-        f'--image="{image_path}" '
-        f'--bitstream="{bitstream}" '
-        f'--log-dir="{log_dir}"'
-    )
+    runtime = os.path.join(build_dir, "bebop-p2e")
+    artifacts = [
+        os.path.join(build_dir, "vvacDir", "runtimeDir", "rtcfg"),
+        os.path.join(runtime_lib_dir, "libvCtb.so"),
+        runtime,
+    ]
+    missing = [path for path in artifacts if not os.path.isfile(path)]
+    if missing:
+        raise FileNotFoundError(f"P2E runtime artifacts missing: {missing}")
+
+    run_args = [
+        runtime,
+        "run", "p2e",
+        "--image", image_path,
+        "--bitstream", bitstream,
+        "--log-dir", run_log,
+    ]
     if multi_fpga:
-        run_cmd += " --multi-fpga"
-    return runtime_cmd, run_cmd, f"{bbdir}/bebop", run_log, build_dir
+        run_args.append("--multi-fpga")
+    run_env = {**os.environ, **bebop_cargo_env(bbdir, chip)}
+    return shlex.join(run_args), run_env, f"{bbdir}/bebop", run_log
 
 
 def _perfetto_cmd(trace_dir, trace_toml, mlir_files):
@@ -265,7 +271,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         ctx.logger.info(f"[eval-performance] model {model}: p2e runworkload")
         image_name = os.path.splitext(os.path.basename(fw_hex))[0]
         try:
-            runtime_cmd, run_cmd, bebop_cwd, run_log, build_dir = _p2e_run_cmds(
+            run_cmd, run_env, bebop_cwd, run_log = _p2e_run_cmds(
                 bbdir, bitstream, image_name, chip, input_data
             )
         except FileNotFoundError as e:
@@ -277,40 +283,27 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
                 extra["build_dir"] = os.path.dirname(
                     os.path.dirname(os.path.abspath(bitstream))
                 )
+            elif str(e).startswith("P2E runtime artifacts missing"):
+                err = "p2e_runtime_missing"
             await _fail(ctx, origin_tid, err, **extra)
             return
-        rt_result = await stream_run_logger_async(
-            cmd=runtime_cmd, logger=ctx.logger, cwd=bebop_cwd,
-            stdout_prefix=f"p2e runtime {model}",
-            stderr_prefix=f"p2e runtime {model}",
-        )
-        rtcfg = os.path.join(build_dir, "vvacDir", "runtimeDir", "rtcfg")
-        libvctb = os.path.join(
-            build_dir, "vvacDir", "runtimeDir", "lib", "lib_arm", "libvCtb.so"
-        )
-        if rt_result.returncode != 0 or not all(
-            os.path.isfile(p) for p in (rtcfg, libvctb)
-        ):
-            await _fail(ctx, origin_tid, "p2e_runtime_failed",
-                        model=model, returncode=rt_result.returncode)
-            return
         run_result = await stream_run_logger_async(
-            cmd=run_cmd, logger=ctx.logger, cwd=bebop_cwd,
+            cmd=run_cmd, logger=ctx.logger, cwd=bebop_cwd, env=run_env,
             stdout_prefix=f"p2e run {model}",
             stderr_prefix=f"p2e run {model}",
         )
         if run_result.returncode != 0:
             await _fail(ctx, origin_tid, "p2e_run_failed",
                         model=model, returncode=run_result.returncode,
-                        log_dir=log_dir)
+                        log_dir=run_log)
             return
 
         uart_path = Path(run_log) / "uart_hart_0.log"
         if not uart_path.is_file():
             uart_path = Path(run_log) / "uart.log"
         if not uart_path.is_file():
-            ctx.logger.error(f"uart log missing under {log_dir}")
-            await _fail(ctx, origin_tid, "uart_missing", model=model, log_dir=log_dir)
+            ctx.logger.error(f"uart log missing under {run_log}")
+            await _fail(ctx, origin_tid, "uart_missing", model=model, log_dir=run_log)
             return
         try:
             acc_i = accuracy_from_uart(spec["metric"], uart_path.read_text())
