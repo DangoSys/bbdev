@@ -55,7 +55,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     if diff:
         manifest = Path(bbdir) / "examples" / "chips" / chip / "generated" / "bebop" / "Cargo.toml"
         build_dir = str(manifest.parent)
-        features.extend(["bemu", "difftest"])
+        features.append("bemu")
         dramsim_header = os.path.join(bbdir, "result", "include", "dramsim3.h")
         if not os.path.isfile(dramsim_header):
             ctx.logger.info(f"Nix environment is missing {dramsim_header}; rebuilding result")

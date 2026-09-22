@@ -27,10 +27,6 @@ from utils.process_registry import cancellation_requested
 from bemu_common import bemu_core_manifest, bemu_manifest, bemu_tile_index, chip_emu_manifest
 
 
-PERFETTO_TARGETS = {
-    "buddy-buckyball-lenet-run": "buddy-buckyball-lenet-perfetto",
-}
-
 config = {
     "name": "bebop-bemu-sim",
     "description": "Run bebop bemu emulator",
@@ -138,9 +134,11 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         return
     ctx.logger.info(f"binary_path: {binary_path}")
     binary_dir = os.path.dirname(binary_path)
-    perfetto_target = (
-        PERFETTO_TARGETS.get(binary_name) if input_data.get("tool-profile") else None
-    )
+    perfetto_target = None
+    if input_data.get("tool-profile"):
+        if not binary_name.endswith("-run"):
+            raise ValueError(f"tool-profile binary must end with '-run': {binary_name}")
+        perfetto_target = f"{binary_name.removesuffix('-run')}-perfetto"
     if perfetto_target:
         clean_model_trace(binary_dir)
 

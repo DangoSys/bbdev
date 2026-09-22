@@ -8,15 +8,10 @@ import shutil
 import sys
 from pathlib import Path
 
-_SCRIPTS = Path(__file__).resolve().parent
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import chip_pb2 as pb  # noqa: E402
-
-_ENGINE = Path("bebop/src/nodes/bemu")
-_BEMU_CRATE = _ENGINE / "chip"
-
 
 def load_chip(pb_path: Path) -> pb.Chip:
     chip = pb.Chip()
@@ -110,7 +105,7 @@ def install_arch(src_pb: Path, gen: Path) -> Path:
 
 
 def install_bemu(chip: pb.Chip, bbdir: Path, gen: Path) -> Path:
-    src = bbdir / _BEMU_CRATE
+    src = bbdir / "bebop" / "src" / "nodes" / "bemu" / "chip"
     cargo = src / "Cargo.toml"
     build_rs = src / "build.rs"
     if not cargo.is_file():
@@ -160,12 +155,11 @@ default = []
 verilator = ["dep:bebop-verilator"]
 p2e = ["dep:bebop-p2e", "bebop-bemu?/p2e"]
 bemu = ["dep:bebop-bemu"]
-difftest = ["bebop-bemu/difftest"]
 
 [dependencies]
 bebop-verilator = { path = "../../../../../bebop/src/nodes/verilator", optional = true }
 bebop-p2e = { path = "../../../../../bebop/src/nodes/p2e", optional = true }
-bebop-bemu = { path = "../../configs/generated/bemu", optional = true }
+bebop-bemu = { path = "../../configs/generated/bemu", optional = true, default-features = false }
 bebop-dasm = { path = "../../../../../bebop/src/nodes/lib/dasm" }
 bebop-bank-hash = { path = "../../../../../bebop/src/nodes/lib/bank-hash" }
 bebop-bemu-profile = { path = "../../../../../bebop/src/nodes/lib/bemu-profile" }

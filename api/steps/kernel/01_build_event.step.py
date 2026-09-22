@@ -18,19 +18,6 @@ if scripts_path not in sys.path:
     sys.path.insert(0, scripts_path)
 from bin_to_hex import bin_to_hex
 
-KERNEL_MODELS = {
-    "bert",
-    "deepseekr1",
-    "gemma4",
-    "lenet",
-    "llama2",
-    "mobilenet",
-    "qwen3",
-    "resnet",
-    "stable-diffusion",
-    "yolo",
-}
-
 config = {
     "name": "kernel-build",
     "description": "build RISC-V kernel + rootfs for image via bb-tests/workloads/lib/kernel",
@@ -87,8 +74,20 @@ def kernel_model(input_data: dict) -> str:
         raise ValueError("model must be a string")
 
     model = model.lower()
-    if model not in KERNEL_MODELS:
-        valid = ", ".join(sorted(KERNEL_MODELS))
+    supported = {
+        "bert",
+        "deepseekr1",
+        "gemma4",
+        "lenet",
+        "llama2",
+        "mobilenet",
+        "qwen3",
+        "resnet",
+        "stable-diffusion",
+        "yolo",
+    }
+    if model not in supported:
+        valid = ", ".join(sorted(supported))
         raise ValueError(f"unknown kernel model: {model}; valid models: {valid}")
     return model
 

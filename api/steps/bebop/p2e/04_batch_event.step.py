@@ -25,8 +25,7 @@ from utils.event_common import require_chip
 from utils.path import bebop_cargo_env, get_buckyball_path, workloads_output_root
 from utils.stream_run import stream_run_logger_async
 from utils.event_common import check_result, get_origin_trace_id
-from regression import regression_workload_toml
-from regression_harness import nextest_harness_args
+from utils.workload_manifest import resolve_workload_toml
 
 config = {
     "name": "bebop-p2e-batch",
@@ -88,7 +87,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     test_type = input_data.get("test", "elf-tests")
     diff = bool(input_data.get("diff", False))
     try:
-        workload_toml = regression_workload_toml(chip, "p2e", test_type, bbdir, diff=diff)
+        workload_toml = resolve_workload_toml(chip, "p2e", test_type, bbdir, diff=diff)
     except ValueError as e:
         ctx.logger.error(str(e))
         await check_result(
@@ -106,7 +105,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     runtime_env = {**os.environ.copy(), **cargo_env}
     if diff:
         manifest = Path(bbdir) / "examples" / "chips" / chip / "generated" / "bebop" / "Cargo.toml"
-        features.extend(["bemu", "difftest"])
+        features.append("bemu")
         runtime_env["CARGO_TARGET_DIR"] = os.path.join(bebop_dir, "target", f"{chip}-p2e-diff")
     feature_arg = ",".join(features)
     rtcfg_path = os.path.join(build_dir, "vvacDir", "runtimeDir", "rtcfg")
@@ -160,7 +159,15 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     # ── Run nextest ───────────────────────────────────────────────────────
     env = runtime_env.copy()
     env["OUT_PATH"] = build_dir
-    harness = nextest_harness_args(workload_toml, elf_root, env, p2e_bitstream=bitstream)
+    harness_args = [
+        "--",
+        "--workload-toml", workload_toml,
+        "--bb-tests-root", elf_root,
+        "--p2e-bitstream", bitstream,
+    ]
+    if diff:
+        harness_args.append("--diff")
+    harness = shlex.join(harness_args)
     nextest_cmd = (
         f"nix develop -c cargo {cargo_out} nextest run --release "
         f"--manifest-path {shlex.quote(str(manifest))} --features {shlex.quote(feature_arg)} "

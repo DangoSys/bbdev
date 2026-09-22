@@ -29,6 +29,7 @@ if utils_path not in sys.path:
 from utils.path import bebop_cargo_env, get_buckyball_path, log_dir
 from utils.stream_run import stream_run_logger_async
 from utils.event_common import check_result, get_origin_trace_id
+from utils.model import model_layout_name
 
 sys.path.insert(0, os.path.join(get_buckyball_path(), "bb-tests", "workloads", "scripts"))
 import build as workload_build  # noqa: E402
@@ -62,16 +63,8 @@ def _load_sibling(rel):
     return mod
 
 
-_workload = _load_sibling("../workload/01_build_event.step.py")
 _kernel = _load_sibling("../kernel/01_build_event.step.py")
 _p2e = _load_sibling("../bebop/p2e/03_runworkload_event.step.py")
-
-MODEL_LAYOUT = _workload.MODEL_LAYOUT
-PERFETTO_SCRIPT = (
-    Path(get_buckyball_path())
-    / "bb-tests" / "workloads" / "src" / "ModelTest"
-    / "e2e" / "framework" / "trace" / "perfetto.py"
-)
 
 
 def _fail(ctx, origin_tid, error, **extra):
@@ -82,8 +75,7 @@ def _fail(ctx, origin_tid, error, **extra):
 
 def _workload_build(bbdir, chip, model, logger, task_scope):
     model_key = model.lower()
-    if MODEL_LAYOUT.get(model_key) is None:
-        raise ValueError(f"Unknown model: {model}")
+    model_layout_name(model_key)
     workload_build.build_workload(
         bbdir, chip, model=model_key, logger=logger, task_scope=task_scope
     )
@@ -165,7 +157,7 @@ def _perfetto_cmd(trace_dir, trace_toml, mlir_files):
     for mlir in mlir_files:
         args += ["--mlir", str(mlir)]
     return (
-        f"{sys.executable} {shlex.quote(str(PERFETTO_SCRIPT))} "
+        f"{sys.executable} {shlex.quote(str(Path(get_buckyball_path()) / 'bb-tests/workloads/src/ModelTest/e2e/framework/trace/perfetto.py'))} "
         + " ".join(shlex.quote(a) for a in args)
     )
 
@@ -209,7 +201,9 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     model_results = []
     for model in models:
         model_key = model.lower()
-        if MODEL_LAYOUT.get(model_key) is None:
+        try:
+            model_layout_name(model_key)
+        except ValueError:
             ctx.logger.error(f"Unknown model: {model}")
             await _fail(ctx, origin_tid, "unknown_model", model=model)
             return

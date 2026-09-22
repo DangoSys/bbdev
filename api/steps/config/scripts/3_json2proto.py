@@ -9,15 +9,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_SCRIPTS = Path(__file__).resolve().parent
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import chip_pb2 as pb  # noqa: E402
 
 
 def _load_derive():
-    path = _SCRIPTS / "2_parameter_derivation.py"
+    path = Path(__file__).resolve().with_name("2_parameter_derivation.py")
     spec = importlib.util.spec_from_file_location("parameter_derivation", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {path}")
