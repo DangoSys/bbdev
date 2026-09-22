@@ -1,9 +1,9 @@
 """
 bebop bemu batch event handler
 
-Runs bebop bemu nextest batch regression:
+Runs bebop bemu batch regression:
   1. Build the selected chip's BEMU wrapper
-  2. Run cargo nextest with bemu-specific config
+  2. Run the BEMU regression harness
 """
 
 import os
@@ -27,12 +27,11 @@ from utils.path import bebop_cargo_env, get_buckyball_path, workloads_output_roo
 from utils.stream_run import stream_run_logger_async
 from utils.event_common import check_result, get_origin_trace_id
 from bemu_common import bemu_manifest, chip_emu_manifest
-from regression import regression_workload_toml
-from regression_harness import nextest_harness_args
+from utils.workload_manifest import resolve_workload_toml
 
 config = {
     "name": "bebop-bemu-batch",
-    "description": "Run bebop bemu nextest batch regression",
+    "description": "Run bebop bemu batch regression",
     "flows": ["bebop"],
     "triggers": [queue("bebop.bemu.batch")],
     "enqueues": [],
@@ -42,10 +41,6 @@ config = {
 async def handler(input_data: dict, ctx: FlowContext) -> None:
     origin_tid = get_origin_trace_id(input_data, ctx)
     bbdir = get_buckyball_path()
-    nextest_config = (
-        f"{os.path.dirname(os.path.abspath(__file__))}/scripts/nextest.toml"
-    )
-
     chip = input_data.get("chip")
     if not chip:
         ctx.logger.error("Missing required parameter: chip must be specified")
@@ -82,7 +77,7 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
     env.update(bebop_cargo_env(bbdir, chip))
     test_type = input_data.get("test", "elf-tests")
     try:
-        workload_toml = regression_workload_toml(
+        workload_toml = resolve_workload_toml(
             chip, "bemu", test_type, bbdir, rushB=rushB
         )
     except ValueError as e:
@@ -129,25 +124,28 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
         )
         return
 
-    # ── Run nextest ───────────────────────────────────────────────────────
-    # Pass test harness parameters through nextest's process environment.
+    # ── Run regression ────────────────────────────────────────────────────
     if input_data.get("clean-before", input_data.get("clean_before", False)):
         shutil.rmtree(
             os.path.join(env["CARGO_TARGET_DIR"], "test-artifacts"), ignore_errors=True
         )
         ctx.logger.info("Cleaned previous bebop test artifacts")
 
-    harness = nextest_harness_args(workload_toml, elf_root, env)
-    nextest_cmd = (
-        f"nix develop -c cargo nextest run --manifest-path {shlex.quote(str(bemu_cargo_manifest))} "
+    harness = shlex.join([
+        "--",
+        "--workload-toml", workload_toml,
+        "--bb-tests-root", elf_root,
+        *(["--rushb-backend", "bemu"] if rushB else []),
+    ])
+    test_cmd = (
+        f"nix develop -c cargo test --manifest-path {shlex.quote(str(bemu_cargo_manifest))} "
         "--test test_bemu "
-        f"--config-file {shlex.quote(nextest_config)} "
         f"{harness}"
     )
 
-    ctx.logger.info(f"Running bebop bemu nextest: {nextest_cmd}")
+    ctx.logger.info(f"Running bebop bemu regression: {test_cmd}")
     run_result = await stream_run_logger_async(
-        cmd=nextest_cmd,
+        cmd=test_cmd,
         logger=ctx.logger,
         cwd=bbdir,
         stdout_prefix="bebop bemu batch",
@@ -165,7 +163,6 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
             "chip": chip,
             "test_type": test_type,
             "rushB": rushB,
-            "nextest_config": nextest_config,
             "workload_toml": workload_toml,
         },
         trace_id=origin_tid,

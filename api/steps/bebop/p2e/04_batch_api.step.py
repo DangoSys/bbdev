@@ -2,7 +2,7 @@ from motia import ApiRequest, ApiResponse, FlowContext, api
 
 config = {
     "name": "bebop-p2e-batch-api",
-    "description": "Run bebop p2e nextest batch regression",
+    "description": "Run bebop p2e batch regression",
     "flows": ["bebop"],
     "triggers": [api("POST", "/bebop/p2e/batch")],
     "enqueues": ["bebop.p2e.batch"],
@@ -44,10 +44,12 @@ async def handler(request: ApiRequest, ctx: FlowContext) -> ApiResponse:
             body={"error": f"Invalid test type: {test_type}. Must be 'elf-tests' or 'pk-tests'"}
         )
 
+    diff = bool(body.get("diff", False))
     data = {
         "chip": chip,
         "bitstream": bitstream,
         "test": test_type,
+        "diff": diff,
     }
     await ctx.enqueue({"topic": "bebop.p2e.batch", "data": {**data, "_trace_id": ctx.trace_id}})
     return ApiResponse(status=202, body={"trace_id": ctx.trace_id})
